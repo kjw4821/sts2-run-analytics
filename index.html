@@ -76,6 +76,35 @@
       <div id="detail-content"></div>
       <button id="delete-run" type="button" class="secondary">이 기록 삭제</button>
     </section>
+    <section aria-labelledby="card-analysis-title">
+      <h2 id="card-analysis-title">전투 카드 선택 분석</h2>
+      <p>일반·엘리트·보스 전투에서 선택한 횟수 기준으로 유형별 상위 3장을 표시합니다. 타격·수비 등 시작 카드는 제외합니다.</p>
+      <p>채용률은 선택 / 제시 횟수, 선택 런 승률은 해당 카드를 선택한 승리 / 승패 확인 런 수입니다.</p>
+      <form id="card-filters" class="filters">
+        <label>캐릭터 <select name="character"><option value="">전체</option></select></label>
+        <label>참가 방식 <select name="mode">
+          <option value="">전체</option><option value="single">싱글</option><option value="multi">멀티</option>
+        </select></label>
+        <label>승천 단계 <input name="ascension" type="number" min="0" step="1" placeholder="전체"></label>
+        <button type="submit">필터 적용</button>
+      </form>
+      <p id="card-analysis-status" role="status"></p>
+      <div id="card-analysis" hidden></div>
+    </section>
+    <section aria-labelledby="tendency-title">
+      <h2 id="tendency-title">플레이 성향 분석</h2>
+      <p>엘리트 비율은 장소 유형이 확인된 방문을, 회복·강화 비율은 휴식 행동이 기록된 방문을 기준으로 계산합니다.</p>
+      <form id="tendency-filters" class="filters">
+        <label>캐릭터 <select name="character"><option value="">전체</option></select></label>
+        <label>참가 방식 <select name="mode">
+          <option value="">전체</option><option value="single">싱글</option><option value="multi">멀티</option>
+        </select></label>
+        <label>승천 단계 <input name="ascension" type="number" min="0" step="1" placeholder="전체"></label>
+        <button type="submit">필터 적용</button>
+      </form>
+      <p id="tendency-status" role="status"></p>
+      <dl id="tendency-analysis" hidden></dl>
+    </section>
   </main>
 </body>
 </html>

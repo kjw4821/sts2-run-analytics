@@ -116,6 +116,56 @@ function openDatabase(filename) {
     FROM Runs GROUP BY play_mode, character_id
     ORDER BY play_mode, character_id
   `);
+  const cardAnalysis = db.prepare(`
+    SELECT card_id, COUNT(*) AS offered, SUM(was_picked) AS picked,
+      COUNT(DISTINCT run_id) FILTER (WHERE was_picked = 1 AND result = 'win') AS wins,
+      COUNT(DISTINCT run_id) FILTER (WHERE was_picked = 1 AND result IN ('win', 'loss')) AS decided
+    FROM CardChoices
+    JOIN FloorRecords USING (floor_record_id)
+    JOIN Runs USING (run_id)
+    WHERE CardChoices.room_type IN ('monster', 'elite', 'boss')
+      AND was_picked IS NOT NULL
+      AND ($character IS NULL OR character_id = $character)
+      AND ($mode IS NULL OR play_mode = $mode)
+      AND ($ascension IS NULL OR ascension = $ascension)
+    GROUP BY card_id
+    ORDER BY offered DESC, picked DESC, card_id
+  `);
+  const tendencyAnalysis = db.prepare(`
+    WITH matching_runs AS (
+      SELECT run_id FROM Runs
+      WHERE ($character IS NULL OR character_id = $character)
+        AND ($mode IS NULL OR play_mode = $mode)
+        AND ($ascension IS NULL OR ascension = $ascension)
+    ),
+    visits AS (
+      SELECT floor_record_id,
+        LOWER(COALESCE(TRIM(room_type), '')) AS room_type
+      FROM FloorRecords JOIN matching_runs USING (run_id)
+    ),
+    rest_counts AS (
+      SELECT UPPER(TRIM(action_code)) AS code, COUNT(*) AS count,
+        COUNT(DISTINCT floor_record_id) AS visits
+      FROM RunActions JOIN visits USING (floor_record_id)
+      WHERE action_type = 'rest'
+      GROUP BY UPPER(TRIM(action_code))
+    )
+    SELECT
+      (SELECT COUNT(*) FROM matching_runs) AS runs,
+      COUNT(*) FILTER (WHERE room_type NOT IN ('', 'unknown') OR EXISTS (
+        SELECT 1 FROM VisitRooms r WHERE r.floor_record_id = visits.floor_record_id
+          AND LOWER(TRIM(r.room_type)) NOT IN ('', 'unknown')
+      )) AS known_visits,
+      COUNT(*) FILTER (WHERE room_type = 'elite' OR EXISTS (
+        SELECT 1 FROM VisitRooms r WHERE r.floor_record_id = visits.floor_record_id
+          AND LOWER(TRIM(r.room_type)) = 'elite'
+      )) AS elite_visits,
+      (SELECT COUNT(DISTINCT floor_record_id) FROM RunActions JOIN visits USING (floor_record_id)
+        WHERE action_type = 'rest') AS rest_visits,
+      (SELECT json_group_array(json_object('code', code, 'count', count, 'visits', visits) ORDER BY code)
+        FROM rest_counts) AS rest_actions
+    FROM visits
+  `);
   const findFloors = db.prepare(`
     SELECT floor_record_id, act_number, visit_order, map_point_type, room_type, current_hp, max_hp, current_gold
     FROM FloorRecords WHERE run_id = ? ORDER BY act_number, visit_order
@@ -192,6 +242,13 @@ function openDatabase(filename) {
     },
     dashboard() {
       return dashboard.all();
+    },
+    cardAnalysis({ character, mode, ascension }) {
+      return cardAnalysis.all({ character, mode, ascension });
+    },
+    tendencyAnalysis({ character, mode, ascension }) {
+      const analysis = tendencyAnalysis.get({ character, mode, ascension });
+      return { ...analysis, rest_actions: JSON.parse(analysis.rest_actions) };
     },
     detail(id) {
       const run = findRun.get(id);

@@ -33,6 +33,7 @@ function readCatalog(entries) {
       catalog.set(id, {
         name,
         rarity: typeof entry.rarity_key === 'string' ? entry.rarity_key.toLowerCase() : undefined,
+        type: typeof entry.type_key === 'string' ? entry.type_key.toLowerCase() : undefined,
         image: image && `https://spire-codex.com${image}`,
         fullImage: koreanCardRender(entry.image_url_card),
         upgradedImage: koreanCardRender(entry.image_url_card_upg),

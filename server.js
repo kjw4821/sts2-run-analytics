@@ -84,6 +84,38 @@ function createApp(database, gameNames = createGameNames()) {
     const names = await gameNames.lookup(ids, 'CHARACTER');
     return json(response, 200, { groups, characterNames: Object.fromEntries(names) });
   });
+  app.get('/api/card-analysis', async (request, response) => {
+    const filters = readFilters(new URL(request.originalUrl, 'http://localhost').searchParams);
+    if (!filters) return json(response, 400, { message: '필터 값을 확인해 주세요.' });
+    const rows = database.cardAnalysis(filters).filter((row) => row.picked > 0);
+    const ids = rows.map((row) => row.card_id);
+    const [rarities, types] = await Promise.all([
+      gameNames.lookup(ids, 'CARD', 'rarity'),
+      gameNames.lookup(ids, 'CARD', 'type'),
+    ]);
+    const ranked = rows.filter(({ card_id: id }) => rarities.get(id) !== 'basic')
+      .sort((a, b) => b.picked - a.picked || a.offered - b.offered || a.card_id.localeCompare(b.card_id));
+    const leaders = ['attack', 'skill', 'power'].flatMap((type) =>
+      ranked.filter(({ card_id: id }) => types.get(id) === type).slice(0, 3)
+        .map((row) => ({ ...row, type })));
+    const leaderIds = leaders.map((row) => row.card_id);
+    const [names, fullImages, portraits] = await Promise.all([
+      gameNames.lookup(leaderIds, 'CARD'),
+      gameNames.lookup(leaderIds, 'CARD', 'fullImage'),
+      gameNames.lookup(leaderIds, 'CARD', 'image'),
+    ]);
+    return json(response, 200, { cards: leaders.map((row) => ({
+      ...row,
+      name: names.get(row.card_id) ?? row.card_id,
+      full_image_url: fullImages.get(row.card_id) ?? null,
+      image_url: portraits.get(row.card_id) ?? null,
+    })) });
+  });
+  app.get('/api/tendency-analysis', (request, response) => {
+    const filters = readFilters(new URL(request.originalUrl, 'http://localhost').searchParams);
+    if (!filters) return json(response, 400, { message: '필터 값을 확인해 주세요.' });
+    return json(response, 200, database.tendencyAnalysis(filters));
+  });
   app.get('/api/runs', async (request, response) => {
     const filters = readFilters(new URL(request.originalUrl, 'http://localhost').searchParams);
     if (!filters) return json(response, 400, { message: '필터 값을 확인해 주세요.' });

@@ -19,6 +19,12 @@ const previousRecords = document.querySelector('#previous-records');
 const nextRecords = document.querySelector('#next-records');
 const dashboard = document.querySelector('#dashboard');
 const dashboardStatus = document.querySelector('#dashboard-status');
+const cardFilters = document.querySelector('#card-filters');
+const cardAnalysisStatus = document.querySelector('#card-analysis-status');
+const cardAnalysis = document.querySelector('#card-analysis');
+const tendencyFilters = document.querySelector('#tendency-filters');
+const tendencyStatus = document.querySelector('#tendency-status');
+const tendencyAnalysis = document.querySelector('#tendency-analysis');
 const detail = document.querySelector('#detail');
 const detailTitle = document.querySelector('#detail-title');
 const detailContent = document.querySelector('#detail-content');
@@ -52,6 +58,8 @@ let listedRuns = [];
 let listedCharacterNames = {};
 let listRequest = 0;
 let dashboardRequest = 0;
+let cardAnalysisRequest = 0;
+let tendencyRequest = 0;
 let detailRequest = 0;
 let activeRun = null;
 
@@ -171,7 +179,7 @@ form.addEventListener('submit', async (event) => {
       importResults.append(row);
     }
     importStatus.textContent = `저장 ${totals.imported}개 · 중복 ${totals.duplicate}개 · 실패 ${totals.failed}개`;
-    await Promise.all([loadRecords(true), loadDashboard()]);
+    await Promise.all([loadRecords(true), loadDashboard(), loadCardAnalysis(), loadTendencyAnalysis()]);
   } finally {
     for (const control of controls) control.disabled = false;
   }
@@ -237,6 +245,100 @@ async function loadDashboard() {
   }
 }
 
+function formatCardRate(numerator, denominator) {
+  return denominator ? `${winRateFormat.format(numerator / denominator)} (${numerator} / ${denominator})`
+    : '산출 불가 (0 / 0)';
+}
+
+function rankedCard(card, rank) {
+  const row = element('li');
+  row.className = 'ranked-card';
+  const artwork = element('div');
+  artwork.className = 'ranked-card-art';
+  const source = card.full_image_url || card.image_url;
+  if (source) {
+    const image = element('img');
+    image.alt = '';
+    image.loading = 'lazy';
+    image.referrerPolicy = 'no-referrer';
+    image.addEventListener('error', () => {
+      if (image.src === card.full_image_url && card.image_url && card.image_url !== card.full_image_url) {
+        image.src = card.image_url;
+      } else {
+        image.remove();
+      }
+    });
+    image.src = source;
+    artwork.append(image);
+  }
+  const stats = element('div');
+  stats.append(
+    element('h4', `${rank}위 · ${card.name}`),
+    element('p', `채용률 ${formatCardRate(card.picked, card.offered)}`),
+    element('p', `선택 런 승률 ${formatCardRate(card.wins, card.decided)}`),
+  );
+  row.append(artwork, stats);
+  return row;
+}
+
+async function loadCardAnalysis() {
+  const request = ++cardAnalysisRequest;
+  cardAnalysis.hidden = true;
+  cardAnalysisStatus.textContent = '카드 선택 기록을 불러오는 중…';
+  try {
+    const query = new URLSearchParams(new FormData(cardFilters));
+    const { cards } = await api(`/api/card-analysis?${query}`);
+    if (request !== cardAnalysisRequest) return;
+    const groups = Object.entries({ attack: '공격', skill: '스킬', power: '파워' }).map(([type, label]) => {
+      const group = element('div');
+      group.append(element('h3', label));
+      const leaders = cards.filter((card) => card.type === type);
+      if (leaders.length) {
+        const list = element('ol');
+        list.className = 'ranked-cards';
+        list.append(...leaders.map((card, index) => rankedCard(card, index + 1)));
+        group.append(list);
+      } else {
+        group.append(element('p', '선택 기록이 없습니다.'));
+      }
+      return group;
+    });
+    cardAnalysis.replaceChildren(...groups);
+    cardAnalysis.hidden = !cards.length;
+    cardAnalysisStatus.textContent = cards.length ? '' : '조건에 해당하는 전투 카드 선택 기록이 없습니다.';
+  } catch (error) {
+    if (request === cardAnalysisRequest) cardAnalysisStatus.textContent = error.message;
+  }
+}
+
+async function loadTendencyAnalysis() {
+  const request = ++tendencyRequest;
+  tendencyAnalysis.hidden = true;
+  tendencyStatus.textContent = '플레이 성향을 불러오는 중…';
+  try {
+    const query = new URLSearchParams(new FormData(tendencyFilters));
+    const stats = await api(`/api/tendency-analysis?${query}`);
+    if (request !== tendencyRequest) return;
+    tendencyStatus.textContent = stats.runs ? `분석 대상 ${stats.runs}개 런` : '조건에 해당하는 기록이 없습니다.';
+    const restRate = (code) => stats.rest_visits
+      ? formatCardRate(stats.rest_actions.find((action) => action.code === code)?.visits ?? 0, stats.rest_visits)
+      : '산출 불가 (휴식 행동 미기록)';
+    const metrics = [
+      ['엘리트 방문 비율', stats.known_visits ? formatCardRate(stats.elite_visits, stats.known_visits)
+        : '산출 불가 (장소 유형 미기록)'],
+      ['휴식처 회복 비율', restRate('HEAL')],
+      ['휴식처 강화 비율', restRate('SMITH')],
+      ...stats.rest_actions.filter(({ code }) => code !== 'HEAL' && code !== 'SMITH')
+        .map(({ code, count }) => [`기타 휴식 행동 · ${code}`, `${count}회`]),
+    ];
+    tendencyAnalysis.replaceChildren(...metrics.flatMap(([label, value]) =>
+      [element('dt', label), element('dd', value)]));
+    tendencyAnalysis.hidden = !stats.runs;
+  } catch (error) {
+    if (request === tendencyRequest) tendencyStatus.textContent = error.message;
+  }
+}
+
 async function loadRecords(resetPage = false) {
   const request = ++listRequest;
   recordsStatus.textContent = '기록을 불러오는 중…';
@@ -254,6 +356,16 @@ async function loadRecords(resetPage = false) {
       characterFilter.append(new Option(characterName(selected), selected));
     }
     characterFilter.value = selected;
+    for (const analysis of [cardFilters, tendencyFilters]) {
+      const select = analysis.elements.character;
+      const selectedCharacter = select.value;
+      select.replaceChildren(new Option('전체', ''),
+        ...characters.map((id) => new Option(characterName(id), id)));
+      if (selectedCharacter && !characters.includes(selectedCharacter)) {
+        select.append(new Option(characterName(selectedCharacter), selectedCharacter));
+      }
+      select.value = selectedCharacter;
+    }
     listedRuns = runs;
     listedCharacterNames = characterNames;
     if (resetPage) currentPage = 1;
@@ -516,7 +628,7 @@ deleteButton.addEventListener('click', async () => {
       activeRun = null;
       detail.hidden = true;
     }
-    await Promise.all([loadRecords(), loadDashboard()]);
+    await Promise.all([loadRecords(), loadDashboard(), loadCardAnalysis(), loadTendencyAnalysis()]);
     importStatus.textContent = '기록을 삭제했습니다.';
   } catch (error) {
     importStatus.textContent = error.message;
@@ -527,3 +639,13 @@ deleteButton.addEventListener('click', async () => {
 
 loadRecords();
 loadDashboard();
+cardFilters.addEventListener('submit', (event) => {
+  event.preventDefault();
+  loadCardAnalysis();
+});
+loadCardAnalysis();
+tendencyFilters.addEventListener('submit', (event) => {
+  event.preventDefault();
+  loadTendencyAnalysis();
+});
+loadTendencyAnalysis();

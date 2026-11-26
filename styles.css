@@ -135,3 +135,39 @@ dd { margin: 0; overflow-wrap: anywhere; }
 @media (max-width: 38rem) {
   .deck-grid, .relic-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
+.ranked-cards {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: .65rem;
+}
+
+.ranked-card {
+  display: grid;
+  grid-template-columns: clamp(4rem, 18vw, 7rem) minmax(0, 1fr);
+  align-items: center;
+  gap: .85rem;
+  padding: .65rem;
+  border: 1px solid #474b5c;
+  border-radius: .75rem;
+  background: #222532;
+}
+
+.ranked-card-art {
+  min-height: 3rem;
+  display: grid;
+  place-items: center;
+}
+
+.ranked-card-art img {
+  width: 100%;
+  height: auto;
+  max-height: 10rem;
+  object-fit: contain;
+}
+
+.ranked-card h4,
+.ranked-card p {
+  margin: .25rem 0;
+  overflow-wrap: anywhere;
+}

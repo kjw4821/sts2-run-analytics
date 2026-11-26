@@ -51,6 +51,7 @@ function extractRun(run, player) {
     enchantmentAmount: nonnegativeInteger(card.enchantment?.amount),
   }));
   const result = getRunResult(run);
+  const startTime = nonnegativeInteger(run.start_time);
   const defeatCause = [run.killed_by_encounter, run.killed_by_event]
     .filter((cause) => typeof cause === 'string' && cause && cause !== 'NONE.NONE');
 
@@ -60,6 +61,7 @@ function extractRun(run, player) {
     gameMode: typeof run.game_mode === 'string' ? run.game_mode : null,
     playerCount: run.players.length,
     ascension: nonnegativeInteger(run.ascension),
+    startTime: startTime !== null && startTime <= 8640000000000 ? startTime : null,
     result,
     defeatCause: result === 'loss' && defeatCause.length === 1 ? defeatCause[0] : null,
     buildId: typeof run.build_id === 'string' ? run.build_id : null,

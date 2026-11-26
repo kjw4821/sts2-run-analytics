@@ -24,6 +24,7 @@ CREATE TABLE Runs (
     defeat_cause TEXT,
     build_id TEXT,
     schema_version INTEGER CHECK (schema_version >= 0),
+    start_time INTEGER CHECK (start_time BETWEEN 0 AND 8640000000000),
     CHECK ((play_mode = 'single' AND player_count = 1)
         OR (play_mode = 'multi' AND player_count >= 2))
 ) STRICT;

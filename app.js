@@ -1,6 +1,11 @@
 const form = document.querySelector('#run-form');
 const playerIdInput = document.querySelector('#player-id');
 const folderInput = document.querySelector('#profile-folder');
+const fileInput = document.querySelector('#run-files');
+const filePlayerIdInput = document.querySelector('#file-player-id');
+const importModeButtons = form.querySelectorAll('[data-import-mode]');
+const folderFields = document.querySelector('#folder-fields');
+const fileFields = document.querySelector('#file-fields');
 const importButton = form.querySelector('button[type="submit"]');
 const importStatus = document.querySelector('#status');
 const importResults = document.querySelector('#import-results');
@@ -8,6 +13,10 @@ const filters = document.querySelector('#filters');
 const characterFilter = document.querySelector('#character-filter');
 const records = document.querySelector('#records');
 const recordsStatus = document.querySelector('#records-status');
+const recordPages = document.querySelector('#record-pages');
+const recordPage = document.querySelector('#record-page');
+const previousRecords = document.querySelector('#previous-records');
+const nextRecords = document.querySelector('#next-records');
 const dashboard = document.querySelector('#dashboard');
 const dashboardStatus = document.querySelector('#dashboard-status');
 const detail = document.querySelector('#detail');
@@ -35,7 +44,12 @@ const placeLabels = new Map([
   ['ancient', '고대의 존재'],
   ['unknown', '미지의 방'],
 ]);
-let selectedRunFiles = [];
+const importSelections = { folder: { files: [], message: '' }, files: { files: [], message: '' } };
+let importMode = 'folder';
+const recordsPerPage = 10;
+let currentPage = 1;
+let listedRuns = [];
+let listedCharacterNames = {};
 let listRequest = 0;
 let dashboardRequest = 0;
 let detailRequest = 0;
@@ -67,36 +81,67 @@ async function api(path, options) {
   return payload;
 }
 
+function showImportSelection() {
+  const { files, message } = importSelections[importMode];
+  importButton.disabled = files.length === 0;
+  importStatus.textContent = message;
+  importResults.replaceChildren();
+  importResults.hidden = true;
+}
+
+for (const button of importModeButtons) {
+  button.addEventListener('click', () => {
+    if (importMode === button.dataset.importMode) return;
+    importMode = button.dataset.importMode;
+    const useFolder = importMode === 'folder';
+    folderFields.hidden = folderFields.disabled = !useFolder;
+    fileFields.hidden = fileFields.disabled = useFolder;
+    for (const option of importModeButtons) {
+      option.setAttribute('aria-pressed', String(option === button));
+    }
+    showImportSelection();
+  });
+}
+
 folderInput.addEventListener('change', () => {
   const files = Array.from(folderInput.files);
   const folderName = files[0]?.webkitRelativePath.split('/')[0] ?? '';
-  selectedRunFiles = [];
+  const selection = importSelections.folder;
   playerIdInput.value = '';
-  importButton.disabled = true;
-  importResults.replaceChildren();
-  importResults.hidden = true;
 
   if (!/^\d+$/.test(folderName)) {
-    importStatus.textContent = files.length
+    selection.files = [];
+    selection.message = files.length
       ? 'Steam 폴더 아래의 숫자 ID 폴더를 선택하세요.'
       : '선택한 폴더에서 파일을 찾지 못했습니다.';
-    return;
+  } else {
+    playerIdInput.value = folderName;
+    selection.files = files.filter((file) => /\.run$/i.test(file.name));
+    selection.message = selection.files.length
+      ? `.run 파일 ${selection.files.length}개를 찾았습니다.`
+      : '선택한 폴더와 하위 폴더에 .run 파일이 없습니다.';
   }
+  showImportSelection();
+});
 
-  playerIdInput.value = folderName;
-  selectedRunFiles = files.filter((file) => /\.run$/i.test(file.name));
-  importButton.disabled = selectedRunFiles.length === 0;
-  importStatus.textContent = selectedRunFiles.length
-    ? `.run 파일 ${selectedRunFiles.length}개를 찾았습니다.`
-    : '선택한 폴더와 하위 폴더에 .run 파일이 없습니다.';
+fileInput.addEventListener('change', () => {
+  const files = Array.from(fileInput.files).filter((file) => /\.run$/i.test(file.name));
+  importSelections.files = {
+    files,
+    message: files.length ? `.run 파일 ${files.length}개를 선택했습니다.` : '.run 파일을 선택하세요.',
+  };
+  showImportSelection();
 });
 
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
   if (importButton.disabled) return;
-  const files = selectedRunFiles;
-  const playerId = playerIdInput.value.trim();
-  for (const control of [folderInput, playerIdInput, importButton]) control.disabled = true;
+  const useFolder = importMode === 'folder';
+  const { files } = importSelections[importMode];
+  const playerId = (useFolder ? playerIdInput : filePlayerIdInput).value.trim();
+  const fields = useFolder ? folderFields : fileFields;
+  const controls = [fields, importButton, ...importModeButtons];
+  for (const control of controls) control.disabled = true;
   importResults.replaceChildren();
   importResults.hidden = false;
   const totals = { imported: 0, duplicate: 0, failed: 0 };
@@ -104,15 +149,17 @@ form.addEventListener('submit', async (event) => {
     for (const [index, file] of files.entries()) {
       importStatus.textContent = `${index + 1}/${files.length} 파일 처리 중…`;
       const row = element('li');
-      const relativeName = file.webkitRelativePath.split('/').slice(1).join('/');
+      const relativeName = useFolder ? file.webkitRelativePath.split('/').slice(1).join('/') : file.name;
       try {
-        const headers = { 'Content-Type': 'application/octet-stream', 'X-Player-Id': playerId };
+        const headers = { 'Content-Type': 'application/octet-stream' };
+        if (playerId) headers['X-Player-Id'] = playerId;
         const query = new URLSearchParams({ filename: file.name });
         const result = await api(`/api/import?${query}`, { method: 'POST', headers, body: file });
         totals[result.status] += 1;
         const additions = [];
         if (result.roomsUpdated) additions.push('방문 정보');
         if (result.enchantmentsUpdated) additions.push('인챈트 정보');
+        if (result.startTimeUpdated) additions.push('시작 시각');
         const label = result.status === 'imported' ? '저장 완료' :
           additions.length ? `기존 기록에 ${additions.join('·')} 추가` : '이미 저장된 파일';
         row.append(element('span', `${relativeName} · ${label}`),
@@ -124,13 +171,17 @@ form.addEventListener('submit', async (event) => {
       importResults.append(row);
     }
     importStatus.textContent = `저장 ${totals.imported}개 · 중복 ${totals.duplicate}개 · 실패 ${totals.failed}개`;
-    await Promise.all([loadRecords(), loadDashboard()]);
+    await Promise.all([loadRecords(true), loadDashboard()]);
   } finally {
-    for (const control of [folderInput, playerIdInput, importButton]) control.disabled = false;
+    for (const control of controls) control.disabled = false;
   }
 });
 
 const winRateFormat = new Intl.NumberFormat('ko-KR', { style: 'percent', maximumFractionDigits: 1 });
+const startTimeFormat = new Intl.DateTimeFormat('ko-KR', {
+  timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+});
 
 function scoreText({ total, wins, decided, win_rate }) {
   const rate = win_rate === null ? '산출 불가' : winRateFormat.format(win_rate);
@@ -145,7 +196,7 @@ function showCharacterRuns(mode, character) {
   filters.elements.mode.value = mode;
   filters.elements.ascension.value = '';
   filters.elements.result.value = '';
-  loadRecords();
+  loadRecords(true);
   document.querySelector('#records-title').focus();
 }
 
@@ -186,10 +237,11 @@ async function loadDashboard() {
   }
 }
 
-async function loadRecords() {
+async function loadRecords(resetPage = false) {
   const request = ++listRequest;
   recordsStatus.textContent = '기록을 불러오는 중…';
   records.replaceChildren();
+  recordPages.hidden = true;
   try {
     const query = new URLSearchParams(new FormData(filters));
     const { runs, characters, characterNames = {} } = await api(`/api/runs?${query}`);
@@ -202,24 +254,52 @@ async function loadRecords() {
       characterFilter.append(new Option(characterName(selected), selected));
     }
     characterFilter.value = selected;
-    for (const run of runs) {
-      const row = element('li');
-      const level = run.ascension === null ? '승천 확인 불가' : `승천 ${run.ascension}`;
-      const title = [characterName(run.character_id), modeLabels[run.play_mode], level, resultLabels[run.result]].join(' · ');
-      row.append(action(title, () => showDetail(run.run_id)));
-      records.append(row);
-    }
-    recordsStatus.textContent = runs.length ? `${runs.length}건` : '조건에 맞는 저장 기록이 없습니다.';
+    listedRuns = runs;
+    listedCharacterNames = characterNames;
+    if (resetPage) currentPage = 1;
+    renderRecordPage();
   } catch (error) {
     if (request === listRequest) recordsStatus.textContent = error.message;
   }
 }
 
+function renderRecordPage() {
+  const total = listedRuns.length;
+  const pageCount = Math.max(1, Math.ceil(total / recordsPerPage));
+  currentPage = Math.min(pageCount, Math.max(1, currentPage));
+  const start = (currentPage - 1) * recordsPerPage;
+  records.replaceChildren();
+  for (const run of listedRuns.slice(start, start + recordsPerPage)) {
+    const row = element('li');
+    const level = run.ascension === null ? '승천 확인 불가' : `승천 ${run.ascension}`;
+    const started = run.start_time == null ? '시작 시각 미상' : startTimeFormat.format(run.start_time * 1000);
+    const id = run.character_id;
+    const name = element('span', Object.hasOwn(listedCharacterNames, id) ? listedCharacterNames[id] : displayId(id));
+    name.className = 'record-character';
+    name.dataset.character = run.character_id.toUpperCase().replace(/^CHARACTER\./, '');
+    const result = element('span', resultLabels[run.result]);
+    result.className = 'record-result';
+    result.dataset.result = run.result;
+    const recordButton = action(undefined, () => showDetail(run.run_id));
+    recordButton.append(name, ` · ${modeLabels[run.play_mode]} · ${level} · `, result, ` · ${started}`);
+    row.append(recordButton);
+    records.append(row);
+  }
+  recordsStatus.textContent = total ? `총 ${total}건` : '조건에 맞는 저장 기록이 없습니다.';
+  recordPages.hidden = pageCount === 1;
+  recordPage.textContent = `${currentPage} / ${pageCount}`;
+  previousRecords.disabled = currentPage === 1;
+  nextRecords.disabled = currentPage === pageCount;
+}
+
+previousRecords.addEventListener('click', () => { currentPage -= 1; renderRecordPage(); });
+nextRecords.addEventListener('click', () => { currentPage += 1; renderRecordPage(); });
+
 filters.addEventListener('submit', (event) => {
   event.preventDefault();
-  loadRecords();
+  loadRecords(true);
 });
-filters.addEventListener('reset', () => setTimeout(loadRecords, 0));
+filters.addEventListener('reset', () => setTimeout(() => loadRecords(true), 0));
 
 function visitImage(source) {
   const image = element('img');

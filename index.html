@@ -14,15 +14,31 @@
       <h1>플레이 기록</h1>
     </header>
     <form id="run-form">
-      <div>
-        <label class="field-label" for="profile-folder">Steam 프로필 폴더</label>
-        <input id="profile-folder" type="file" webkitdirectory required aria-describedby="profile-folder-hint">
-        <small id="profile-folder-hint">Windows 파일 탐색기(Win + E)의 주소창에 <code>%APPDATA%\SlayTheSpire2\steam</code>을 입력하세요. 숫자 ID 폴더를 이름 그대로 문서 폴더 등으로 복사한 뒤, 여기에서 복사본을 선택하세요.</small>
+      <div class="import-modes" role="group" aria-label="데이터 입력 방식">
+        <button type="button" data-import-mode="folder" aria-pressed="true" aria-controls="folder-fields">프로필 폴더 선택</button>
+        <button type="button" data-import-mode="files" aria-pressed="false" aria-controls="file-fields">.run 파일 직접 선택</button>
       </div>
-      <div>
-        <label class="field-label" for="player-id">플레이어 ID (멀티 기록용)</label>
-        <input id="player-id" name="playerId" type="text" inputmode="numeric" autocomplete="off" pattern="[0-9]+" required>
-      </div>
+      <fieldset id="folder-fields" class="import-fields" aria-label="프로필 폴더 선택">
+        <div>
+          <label class="field-label" for="profile-folder">Steam 프로필 폴더</label>
+          <input id="profile-folder" type="file" webkitdirectory required aria-describedby="profile-folder-hint">
+          <small id="profile-folder-hint">Windows 파일 탐색기(Win + E)의 주소창에 <code>%APPDATA%\SlayTheSpire2\steam</code>을 입력하세요. 숫자 ID 폴더를 이름 그대로 문서 폴더 등으로 복사한 뒤, 여기에서 복사본을 선택하세요.</small>
+        </div>
+        <div>
+          <label class="field-label" for="player-id">플레이어 ID (멀티 기록용)</label>
+          <input id="player-id" name="playerId" type="text" inputmode="numeric" autocomplete="off" pattern="[0-9]+" required>
+        </div>
+      </fieldset>
+      <fieldset id="file-fields" class="import-fields" aria-label=".run 파일 직접 선택" hidden disabled>
+        <div>
+          <label class="field-label" for="run-files">기록 파일 (.run)</label>
+          <input id="run-files" type="file" accept=".run" multiple required>
+        </div>
+        <div>
+          <label class="field-label" for="file-player-id">플레이어 ID (멀티 기록용)</label>
+          <input id="file-player-id" type="text" inputmode="numeric" autocomplete="off" pattern="[0-9]+">
+        </div>
+      </fieldset>
       <button type="submit" disabled>기록 가져오기</button>
     </form>
     <p id="status" role="status"></p>
@@ -49,6 +65,11 @@
       </form>
       <p id="records-status" role="status"></p>
       <ul id="records" class="record-list"></ul>
+      <nav id="record-pages" class="record-pages" aria-label="기록 페이지" hidden>
+        <button id="previous-records" type="button" class="secondary" aria-controls="records">← 이전</button>
+        <span id="record-page" role="status"></span>
+        <button id="next-records" type="button" class="secondary" aria-controls="records">다음 →</button>
+      </nav>
     </section>
     <section id="detail" aria-labelledby="detail-title" hidden>
       <h2 id="detail-title" tabindex="-1">기록 상세</h2>

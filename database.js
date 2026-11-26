@@ -29,12 +29,17 @@ function openDatabase(filename) {
           ALTER TABLE RunDeckCards ADD COLUMN enchantment_id TEXT;
           ALTER TABLE RunDeckCards ADD COLUMN enchantment_amount INTEGER CHECK (enchantment_amount >= 0);
         `);
-      } else if (version !== 2 && version !== 3) {
+      } else if (version !== 2 && version !== 3 && version !== 4) {
         throw new Error(`지원하지 않는 DB 버전입니다. (${version})`);
       }
       if (version < 3) {
         db.exec(readFileSync(join(__dirname, 'visit-rooms.sql'), 'utf8'));
-        db.exec('PRAGMA user_version = 3');
+      }
+      if (version > 0 && version < 4) {
+        db.exec('ALTER TABLE Runs ADD COLUMN start_time INTEGER CHECK (start_time BETWEEN 0 AND 8640000000000)');
+      }
+      if (version < 4) {
+        db.exec('PRAGMA user_version = 4');
       }
     });
   } catch (error) {
@@ -48,9 +53,10 @@ function openDatabase(filename) {
   const addRelic = db.prepare('INSERT INTO Relics VALUES (?) ON CONFLICT DO NOTHING');
   const addRun = db.prepare(`
     INSERT INTO Runs (source_hash, character_id, play_mode, game_mode, player_count,
-                      ascension, result, defeat_cause, build_id, schema_version)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                      ascension, result, defeat_cause, build_id, schema_version, start_time)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
+  const fillStartTime = db.prepare('UPDATE Runs SET start_time = ? WHERE run_id = ? AND start_time IS NULL');
   const addFloor = db.prepare(`
     INSERT INTO FloorRecords (run_id, act_number, visit_order, map_point_type, room_type,
                               current_hp, max_hp, current_gold) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -82,7 +88,7 @@ function openDatabase(filename) {
     UPDATE RunDeckCards SET enchantment_id = ?, enchantment_amount = ?
     WHERE run_id = ? AND card_order = ? AND card_id = ? AND enchantment_id IS NULL
   `);
-  const runColumns = 'run_id, character_id, play_mode, game_mode, player_count, ascension, result';
+  const runColumns = 'run_id, character_id, play_mode, game_mode, player_count, ascension, result, start_time';
   const findRun = db.prepare(`SELECT ${runColumns}, defeat_cause, build_id FROM Runs WHERE run_id = ?`);
   const listRuns = db.prepare(`
     SELECT ${runColumns} FROM Runs
@@ -146,13 +152,14 @@ function openDatabase(filename) {
             const saved = findFloorId.get(existing.run_id, floor.actNumber, floor.visitOrder);
             if (saved) roomsUpdated += saveRooms(saved.floor_record_id, floor.rooms ?? []);
           }
-          return { status: 'duplicate', runId: existing.run_id, enchantmentsUpdated: updated, roomsUpdated };
+          const startTimeUpdated = run.startTime != null && fillStartTime.run(run.startTime, existing.run_id).changes > 0;
+          return { status: 'duplicate', runId: existing.run_id, enchantmentsUpdated: updated, roomsUpdated, startTimeUpdated };
         }
 
         addCharacter.run(run.characterId);
         const { lastInsertRowid: runId } = addRun.run(hash, run.characterId, run.playMode,
           run.gameMode, run.playerCount, run.ascension, run.result, run.defeatCause,
-          run.buildId, run.schemaVersion);
+          run.buildId, run.schemaVersion, run.startTime ?? null);
         for (const floor of run.floors) {
           const { lastInsertRowid: floorId } = addFloor.run(runId, floor.actNumber,
             floor.visitOrder, floor.mapPointType, floor.roomType, floor.currentHp,

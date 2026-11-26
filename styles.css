@@ -30,6 +30,22 @@ input, select { background: #171923; color: inherit; }
 button { background: #eec782; color: #231b10; border: 0; font-weight: 750; cursor: pointer; }
 button:disabled { opacity: .65; cursor: wait; }
 button.secondary { background: #34384a; color: inherit; }
+.import-modes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .5rem; }
+.import-modes button[aria-pressed="false"] { background: #34384a; color: inherit; }
+.import-fields { min-width: 0; margin: 0; padding: 0; border: 0; }
+.import-fields:not([hidden]) { display: grid; gap: 1rem; }
+.record-pages:not([hidden]) { display: flex; justify-content: center; align-items: center; gap: .75rem; margin-top: 1rem; }
+.record-pages button { width: auto; }
+.record-pages button:disabled { cursor: default; }
+.record-character[data-character="IRONCLAD"] { color: #ff8b8b; }
+.record-character[data-character="SILENT"] { color: #8bdf9c; }
+.record-character[data-character="DEFECT"] { color: #91c7ff; }
+.record-character[data-character="REGENT"] { color: #ffb577; }
+.record-character[data-character="NECROBINDER"] { color: #e8a7f2; }
+.record-character[data-character="FOOL"] { color: #f7e271; }
+.record-result[data-result="win"] { color: #8bdf9c; }
+.record-result[data-result="loss"] { color: #ff8b8b; }
+.record-result[data-result="abandoned"] { color: #b9bbc7; }
 #status:empty { margin: 0; }
 section { margin-top: 1.25rem; padding: 1rem; border: 1px solid #777d92; border-radius: .75rem; }
 h2 { margin-top: 0; font-size: 1.1rem; }

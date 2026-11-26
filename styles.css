@@ -171,3 +171,21 @@ dd { margin: 0; overflow-wrap: anywhere; }
   margin: .25rem 0;
   overflow-wrap: anywhere;
 }
+
+#tendency-comparison {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: .9rem;
+}
+
+#tendency-comparison th,
+#tendency-comparison td {
+  padding: .55rem .35rem;
+  border-bottom: 1px solid #474b5c;
+  text-align: left;
+  vertical-align: top;
+}
+
+#tendency-comparison thead th {
+  background: #222532;
+}

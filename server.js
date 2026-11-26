@@ -3,6 +3,7 @@ const { basename, dirname, join, resolve } = require('node:path');
 const express = require('express');
 const { openDatabase } = require('./database');
 const { createGameNames } = require('./game-names');
+const { createCommunityCardStats } = require('./community-card-stats');
 const { parseRun, selectRunPlayer, extractRun } = require('./run-record');
 
 const MAX_FILE_BYTES = 16 * 1024 * 1024;
@@ -55,7 +56,7 @@ function importFile(request, response, database) {
   return json(response, result.status === 'imported' ? 201 : 200, { ...result, playMode: record.playMode });
 }
 
-function createApp(database, gameNames = createGameNames()) {
+function createApp(database, gameNames = createGameNames(), communityCardStats = createCommunityCardStats()) {
   const app = express();
   app.disable('x-powered-by');
   app.enable('case sensitive routing');
@@ -99,16 +100,18 @@ function createApp(database, gameNames = createGameNames()) {
       ranked.filter(({ card_id: id }) => types.get(id) === type).slice(0, 3)
         .map((row) => ({ ...row, type })));
     const leaderIds = leaders.map((row) => row.card_id);
-    const [names, fullImages, portraits] = await Promise.all([
+    const [names, fullImages, portraits, community] = await Promise.all([
       gameNames.lookup(leaderIds, 'CARD'),
       gameNames.lookup(leaderIds, 'CARD', 'fullImage'),
       gameNames.lookup(leaderIds, 'CARD', 'image'),
+      communityCardStats(filters, leaderIds),
     ]);
-    return json(response, 200, { cards: leaders.map((row) => ({
+    return json(response, 200, { community: community.scope, cards: leaders.map((row) => ({
       ...row,
       name: names.get(row.card_id) ?? row.card_id,
       full_image_url: fullImages.get(row.card_id) ?? null,
       image_url: portraits.get(row.card_id) ?? null,
+      community_pick_rate: community.rates.get(row.card_id) ?? null,
     })) });
   });
   app.get('/api/tendency-analysis', (request, response) => {

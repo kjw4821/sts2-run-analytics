@@ -137,11 +137,20 @@ function openDatabase(filename) {
       WHERE ($character IS NULL OR character_id = $character)
         AND ($mode IS NULL OR play_mode = $mode)
         AND ($ascension IS NULL OR ascension = $ascension)
+        AND ($result IS NULL OR result = $result)
     ),
     visits AS (
-      SELECT floor_record_id,
+      SELECT floor_record_id, run_id,
         LOWER(COALESCE(TRIM(room_type), '')) AS room_type
       FROM FloorRecords JOIN matching_runs USING (run_id)
+    ),
+    classified_visits AS (
+      SELECT *,
+        room_type NOT IN ('', 'unknown') OR EXISTS (
+          SELECT 1 FROM VisitRooms r WHERE r.floor_record_id = visits.floor_record_id
+            AND LOWER(TRIM(r.room_type)) NOT IN ('', 'unknown')
+        ) AS known_room
+      FROM visits
     ),
     rest_counts AS (
       SELECT UPPER(TRIM(action_code)) AS code, COUNT(*) AS count,
@@ -152,19 +161,19 @@ function openDatabase(filename) {
     )
     SELECT
       (SELECT COUNT(*) FROM matching_runs) AS runs,
-      COUNT(*) FILTER (WHERE room_type NOT IN ('', 'unknown') OR EXISTS (
-        SELECT 1 FROM VisitRooms r WHERE r.floor_record_id = visits.floor_record_id
-          AND LOWER(TRIM(r.room_type)) NOT IN ('', 'unknown')
-      )) AS known_visits,
+      COUNT(*) FILTER (WHERE known_room) AS known_visits,
+      COUNT(DISTINCT run_id) FILTER (WHERE known_room) AS known_runs,
       COUNT(*) FILTER (WHERE room_type = 'elite' OR EXISTS (
-        SELECT 1 FROM VisitRooms r WHERE r.floor_record_id = visits.floor_record_id
+        SELECT 1 FROM VisitRooms r WHERE r.floor_record_id = classified_visits.floor_record_id
           AND LOWER(TRIM(r.room_type)) = 'elite'
       )) AS elite_visits,
       (SELECT COUNT(DISTINCT floor_record_id) FROM RunActions JOIN visits USING (floor_record_id)
         WHERE action_type = 'rest') AS rest_visits,
+      (SELECT COUNT(DISTINCT run_id) FROM RunActions JOIN visits USING (floor_record_id)
+        WHERE action_type = 'rest') AS rest_runs,
       (SELECT json_group_array(json_object('code', code, 'count', count, 'visits', visits) ORDER BY code)
         FROM rest_counts) AS rest_actions
-    FROM visits
+    FROM classified_visits
   `);
   const findFloors = db.prepare(`
     SELECT floor_record_id, act_number, visit_order, map_point_type, room_type, current_hp, max_hp, current_gold
@@ -184,6 +193,11 @@ function openDatabase(filename) {
     FROM RunDeckCards WHERE run_id = ? ORDER BY card_order
   `);
   const deleteRun = db.prepare('DELETE FROM Runs WHERE run_id = ?');
+
+  function readTendency({ character, mode, ascension }, result = null) {
+    const analysis = tendencyAnalysis.get({ character, mode, ascension, result });
+    return { ...analysis, rest_actions: JSON.parse(analysis.rest_actions) };
+  }
 
   return {
     importRun(bytes, run) {
@@ -246,9 +260,16 @@ function openDatabase(filename) {
     cardAnalysis({ character, mode, ascension }) {
       return cardAnalysis.all({ character, mode, ascension });
     },
-    tendencyAnalysis({ character, mode, ascension }) {
-      const analysis = tendencyAnalysis.get({ character, mode, ascension });
-      return { ...analysis, rest_actions: JSON.parse(analysis.rest_actions) };
+    tendencyAnalysis(filters) {
+      const analysis = readTendency(filters);
+      if (filters.character === null || filters.ascension === null) return analysis;
+      return {
+        ...analysis,
+        comparison: {
+          win: readTendency(filters, 'win'),
+          loss: readTendency(filters, 'loss'),
+        },
+      };
     },
     detail(id) {
       const run = findRun.get(id);

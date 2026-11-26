@@ -25,6 +25,8 @@ const cardAnalysis = document.querySelector('#card-analysis');
 const tendencyFilters = document.querySelector('#tendency-filters');
 const tendencyStatus = document.querySelector('#tendency-status');
 const tendencyAnalysis = document.querySelector('#tendency-analysis');
+const tendencyComparison = document.querySelector('#tendency-comparison');
+const comparisonStatus = document.querySelector('#comparison-status');
 const detail = document.querySelector('#detail');
 const detailTitle = document.querySelector('#detail-title');
 const detailContent = document.querySelector('#detail-content');
@@ -250,7 +252,7 @@ function formatCardRate(numerator, denominator) {
     : '산출 불가 (0 / 0)';
 }
 
-function rankedCard(card, rank) {
+function rankedCard(card, rank, community) {
   const row = element('li');
   row.className = 'ranked-card';
   const artwork = element('div');
@@ -272,9 +274,12 @@ function rankedCard(card, rank) {
     artwork.append(image);
   }
   const stats = element('div');
+  const value = card.community_pick_rate;
+  const communityRate = Number.isFinite(value) ? winRateFormat.format(value)
+    : community?.available ? '통계 없음' : '조회 실패';
   stats.append(
     element('h4', `${rank}위 · ${card.name}`),
-    element('p', `채용률 ${formatCardRate(card.picked, card.offered)}`),
+    element('p', `내 채용률 ${formatCardRate(card.picked, card.offered)} | 커뮤니티 채용률 ${communityRate}`),
     element('p', `선택 런 승률 ${formatCardRate(card.wins, card.decided)}`),
   );
   row.append(artwork, stats);
@@ -287,7 +292,8 @@ async function loadCardAnalysis() {
   cardAnalysisStatus.textContent = '카드 선택 기록을 불러오는 중…';
   try {
     const query = new URLSearchParams(new FormData(cardFilters));
-    const { cards } = await api(`/api/card-analysis?${query}`);
+    const characterLabel = cardFilters.elements.character.selectedOptions[0]?.textContent;
+    const { cards, community } = await api(`/api/card-analysis?${query}`);
     if (request !== cardAnalysisRequest) return;
     const groups = Object.entries({ attack: '공격', skill: '스킬', power: '파워' }).map(([type, label]) => {
       const group = element('div');
@@ -296,7 +302,7 @@ async function loadCardAnalysis() {
       if (leaders.length) {
         const list = element('ol');
         list.className = 'ranked-cards';
-        list.append(...leaders.map((card, index) => rankedCard(card, index + 1)));
+        list.append(...leaders.map((card, index) => rankedCard(card, index + 1, community)));
         group.append(list);
       } else {
         group.append(element('p', '선택 기록이 없습니다.'));
@@ -306,34 +312,81 @@ async function loadCardAnalysis() {
     cardAnalysis.replaceChildren(...groups);
     cardAnalysis.hidden = !cards.length;
     cardAnalysisStatus.textContent = cards.length ? '' : '조건에 해당하는 전투 카드 선택 기록이 없습니다.';
+    if (cards.length && community) {
+      const character = community.character ? characterLabel || community.character : '전체 캐릭터';
+      const mode = community.bracket.includes('solo') ? '싱글' : '전체 참가 방식';
+      const ascension = community.bracket.includes('a10') ? '승천 10' : '전체 승천';
+      cardAnalysisStatus.textContent = `내 채용률은 전투 보상 기준입니다. 커뮤니티 채용률은 Spire Codex 무료 선택 화면 기준입니다 (${character} · ${mode} · ${ascension}).`;
+    }
   } catch (error) {
     if (request === cardAnalysisRequest) cardAnalysisStatus.textContent = error.message;
   }
 }
 
+function tendencyMetrics(stats) {
+  const restMetric = (code) => [
+    stats.rest_actions.find((action) => action.code === code)?.visits ?? 0,
+    stats.rest_visits, stats.rest_runs, '휴식 행동 미기록',
+  ];
+  return [
+    ['엘리트 방문 비율', stats.elite_visits, stats.known_visits, stats.known_runs, '장소 유형 미기록'],
+    ['휴식처 회복 비율', ...restMetric('HEAL')],
+    ['휴식처 강화 비율', ...restMetric('SMITH')],
+  ];
+}
+
+function renderTendencyComparison(comparison) {
+  if (!comparison) {
+    comparisonStatus.textContent = '캐릭터와 승천 단계를 지정한 뒤 필터를 적용해 주세요.';
+    return;
+  }
+  const { win, loss } = comparison;
+  comparisonStatus.textContent = `승리 ${win.runs}개 런 · 패배 ${loss.runs}개 런`;
+  const formatGroup = (runs, picked, visits, validRuns, missing) => {
+    if (!runs) return '기록 없음';
+    return visits ? `${formatCardRate(picked, visits)} · ${validRuns}개 런` : `산출 불가 (${missing}) · 0개 런`;
+  };
+  const lossMetrics = tendencyMetrics(loss);
+  const rows = tendencyMetrics(win).map(([label, picked, visits, validRuns, missing], index) => {
+    const [, lossPicked, lossVisits, lossRuns, lossMissing] = lossMetrics[index];
+    let difference = '비교할 기록 부족';
+    if (visits && lossVisits) {
+      const points = 100 * (picked / visits - lossPicked / lossVisits);
+      const rounded = Number(points.toFixed(1));
+      difference = `${rounded > 0 ? '+' : ''}${rounded.toFixed(1)}%p`;
+    }
+    const row = element('tr');
+    const heading = element('th', label);
+    heading.scope = 'row';
+    row.append(heading, element('td', formatGroup(win.runs, picked, visits, validRuns, missing)),
+      element('td', formatGroup(loss.runs, lossPicked, lossVisits, lossRuns, lossMissing)), element('td', difference));
+    return row;
+  });
+  tendencyComparison.tBodies[0].replaceChildren(...rows);
+  tendencyComparison.hidden = false;
+}
+
 async function loadTendencyAnalysis() {
   const request = ++tendencyRequest;
   tendencyAnalysis.hidden = true;
+  tendencyComparison.hidden = true;
+  comparisonStatus.textContent = '';
   tendencyStatus.textContent = '플레이 성향을 불러오는 중…';
   try {
     const query = new URLSearchParams(new FormData(tendencyFilters));
     const stats = await api(`/api/tendency-analysis?${query}`);
     if (request !== tendencyRequest) return;
     tendencyStatus.textContent = stats.runs ? `분석 대상 ${stats.runs}개 런` : '조건에 해당하는 기록이 없습니다.';
-    const restRate = (code) => stats.rest_visits
-      ? formatCardRate(stats.rest_actions.find((action) => action.code === code)?.visits ?? 0, stats.rest_visits)
-      : '산출 불가 (휴식 행동 미기록)';
     const metrics = [
-      ['엘리트 방문 비율', stats.known_visits ? formatCardRate(stats.elite_visits, stats.known_visits)
-        : '산출 불가 (장소 유형 미기록)'],
-      ['휴식처 회복 비율', restRate('HEAL')],
-      ['휴식처 강화 비율', restRate('SMITH')],
+      ...tendencyMetrics(stats).map(([label, picked, visits, , missing]) =>
+        [label, visits ? formatCardRate(picked, visits) : `산출 불가 (${missing})`]),
       ...stats.rest_actions.filter(({ code }) => code !== 'HEAL' && code !== 'SMITH')
         .map(({ code, count }) => [`기타 휴식 행동 · ${code}`, `${count}회`]),
     ];
     tendencyAnalysis.replaceChildren(...metrics.flatMap(([label, value]) =>
       [element('dt', label), element('dd', value)]));
     tendencyAnalysis.hidden = !stats.runs;
+    renderTendencyComparison(stats.comparison);
   } catch (error) {
     if (request === tendencyRequest) tendencyStatus.textContent = error.message;
   }

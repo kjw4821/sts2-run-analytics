@@ -50,3 +50,72 @@ dd { margin: 0; overflow-wrap: anywhere; }
 #import-results button { width: auto; }
 #detail details { margin: 1rem 0; }
 #detail summary { cursor: pointer; }
+#dashboard-status:empty { display: none; }
+.dashboard-modes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr));
+  gap: .75rem;
+}
+.dashboard-mode { background: #222532; border-radius: .5rem; padding: .75rem; }
+.dashboard-mode h3 { margin: 0; }
+.deck-grid, .relic-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: .6rem;
+  list-style: none;
+  padding: 0;
+}
+.deck-grid li, .relic-grid li {
+  background: #222532;
+  border: 1px solid #474b5c;
+  border-radius: .5rem;
+  padding: .4rem;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+.deck-art {
+  position: relative;
+  display: grid;
+  place-items: center;
+  aspect-ratio: 2 / 3;
+  background: #171923;
+  border-radius: .25rem;
+  margin-bottom: .4rem;
+  overflow: hidden;
+  color: #c9c8d3;
+  font-size: .75rem;
+}
+.deck-art img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.deck-effect { margin: .4rem 0 0; font-size: .8rem; white-space: pre-line; }
+.deck-label[data-rarity="common"] { color: #fff; }
+.deck-label[data-rarity="uncommon"] { color: #8bdcff; }
+.deck-label[data-rarity="rare"] { color: #ffdb70; }
+.relic-art {
+  position: relative;
+  display: grid;
+  place-items: center;
+  height: 4rem;
+  margin-bottom: .4rem;
+  color: #c9c8d3;
+  font-size: .75rem;
+}
+.relic-art img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.relic-effect { margin: .4rem 0 0; font-size: .8rem; white-space: pre-line; }
+.visit-act { padding-inline-start: .75rem; border-inline-start: 2px solid #474b5c; }
+.visit-list { list-style: none; padding: 0; display: grid; gap: .65rem; }
+.visit-list > li {
+  padding: .75rem 1rem;
+  background: #222532;
+  border: 1px solid #474b5c;
+  border-radius: .5rem;
+  overflow-wrap: anywhere;
+}
+.visit-room + .visit-room { margin-top: .75rem; }
+.visit-room h4 { margin: 0; }
+.visit-list p { margin: .3rem 0 0; color: #c9c8d3; }
+.visit-art { display: flex; flex-wrap: wrap; gap: .5rem; margin-bottom: .5rem; }
+.visit-art:empty { display: none; }
+.visit-art img { width: min(100%, 6rem); height: 5rem; object-fit: contain; }
+@media (max-width: 38rem) {
+  .deck-grid, .relic-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}

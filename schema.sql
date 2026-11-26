@@ -71,5 +71,7 @@ CREATE TABLE RunDeckCards (
     card_order INTEGER NOT NULL CHECK (card_order >= 1),
     card_id TEXT NOT NULL REFERENCES Cards(card_id),
     upgrade_level INTEGER CHECK (upgrade_level >= 0),
+    enchantment_id TEXT,
+    enchantment_amount INTEGER CHECK (enchantment_amount >= 0),
     PRIMARY KEY (run_id, card_order)
 ) STRICT;

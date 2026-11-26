@@ -78,6 +78,12 @@ function createApp(database, gameNames = createGameNames()) {
   app.post('/api/import', validateUpload,
     express.raw({ type: 'application/octet-stream', limit: MAX_FILE_BYTES, inflate: false }),
     (request, response) => importFile(request, response, database));
+  app.get('/api/dashboard', async (_request, response) => {
+    const groups = database.dashboard();
+    const ids = [...new Set(groups.map((group) => group.character_id).filter(Boolean))];
+    const names = await gameNames.lookup(ids, 'CHARACTER');
+    return json(response, 200, { groups, characterNames: Object.fromEntries(names) });
+  });
   app.get('/api/runs', async (request, response) => {
     const filters = readFilters(new URL(request.originalUrl, 'http://localhost').searchParams);
     if (!filters) return json(response, 400, { message: '필터 값을 확인해 주세요.' });
@@ -89,12 +95,13 @@ function createApp(database, gameNames = createGameNames()) {
     const id = positiveId(request.params.id);
     const record = id && database.detail(id);
     if (!record) return next();
-    const { run, relics, deck } = record;
-    const [characters, causes, relicNames, cardNames] = await Promise.all([
+    const { run, floors, relics, deck } = record;
+    const [characters, causes, displayRelics, cards, visits] = await Promise.all([
       gameNames.lookup([run.character_id], 'CHARACTER'),
       gameNames.lookup([run.defeat_cause]),
-      gameNames.lookup(relics.map((relic) => relic.relic_id), 'RELIC'),
-      gameNames.lookup(deck.map((card) => card.card_id), 'CARD'),
+      gameNames.relicDetails(relics),
+      gameNames.cardDetails(deck),
+      gameNames.visitDetails(floors),
     ]);
     return json(response, 200, {
       ...record,
@@ -103,8 +110,9 @@ function createApp(database, gameNames = createGameNames()) {
         character_name: characters.get(run.character_id) ?? null,
         defeat_cause_name: causes.get(run.defeat_cause) ?? null,
       },
-      relics: relics.map((relic) => ({ ...relic, name: relicNames.get(relic.relic_id) ?? null })),
-      deck: deck.map((card) => ({ ...card, name: cardNames.get(card.card_id) ?? null })),
+      relics: displayRelics,
+      deck: cards,
+      floors: visits,
     });
   });
   app.delete('/api/runs/:id', (request, response, next) => {

@@ -15,19 +15,25 @@
     </header>
     <form id="run-form">
       <div>
-        <label class="field-label" for="player-id">플레이어 ID (멀티 기록용)</label>
-        <input id="player-id" name="playerId" type="text" inputmode="numeric" autocomplete="off">
+        <label class="field-label" for="profile-folder">Steam 프로필 폴더</label>
+        <input id="profile-folder" type="file" webkitdirectory required aria-describedby="profile-folder-hint">
+        <small id="profile-folder-hint">Windows 파일 탐색기(Win + E)의 주소창에 <code>%APPDATA%\SlayTheSpire2\steam</code>을 입력하세요. 숫자 ID 폴더를 이름 그대로 문서 폴더 등으로 복사한 뒤, 여기에서 복사본을 선택하세요.</small>
       </div>
       <div>
-        <label class="field-label" for="run-file">기록 파일 (.run)</label>
-        <input id="run-file" type="file" accept=".run" multiple required>
+        <label class="field-label" for="player-id">플레이어 ID (멀티 기록용)</label>
+        <input id="player-id" name="playerId" type="text" inputmode="numeric" autocomplete="off" pattern="[0-9]+" required>
       </div>
-      <button type="submit">기록 가져오기</button>
+      <button type="submit" disabled>기록 가져오기</button>
     </form>
     <p id="status" role="status"></p>
     <ul id="import-results" class="record-list" aria-live="polite" hidden></ul>
+    <section aria-labelledby="dashboard-title">
+      <h2 id="dashboard-title">종합 대시보드</h2>
+      <p id="dashboard-status" role="status"></p>
+      <div id="dashboard"></div>
+    </section>
     <section aria-labelledby="records-title">
-      <h2 id="records-title">저장된 기록</h2>
+      <h2 id="records-title" tabindex="-1">저장된 기록</h2>
       <form id="filters" class="filters">
         <label>캐릭터 <select name="character" id="character-filter"><option value="">전체</option></select></label>
         <label>참가 방식 <select name="mode">

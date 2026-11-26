@@ -24,9 +24,17 @@ function openDatabase(filename) {
       const { user_version: version } = db.prepare('PRAGMA user_version').get();
       if (version === 0) {
         db.exec(readFileSync(join(__dirname, 'schema.sql'), 'utf8'));
-        db.exec('PRAGMA user_version = 1');
-      } else if (version !== 1) {
+      } else if (version === 1) {
+        db.exec(`
+          ALTER TABLE RunDeckCards ADD COLUMN enchantment_id TEXT;
+          ALTER TABLE RunDeckCards ADD COLUMN enchantment_amount INTEGER CHECK (enchantment_amount >= 0);
+        `);
+      } else if (version !== 2 && version !== 3) {
         throw new Error(`지원하지 않는 DB 버전입니다. (${version})`);
+      }
+      if (version < 3) {
+        db.exec(readFileSync(join(__dirname, 'visit-rooms.sql'), 'utf8'));
+        db.exec('PRAGMA user_version = 3');
       }
     });
   } catch (error) {
@@ -48,9 +56,32 @@ function openDatabase(filename) {
                               current_hp, max_hp, current_gold) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const addChoice = db.prepare('INSERT INTO CardChoices VALUES (?, ?, ?, ?, ?)');
+  const findFloorId = db.prepare(`
+    SELECT floor_record_id FROM FloorRecords WHERE run_id = ? AND act_number = ? AND visit_order = ?
+  `);
+  const addRoom = db.prepare(`
+    INSERT INTO VisitRooms (floor_record_id, room_order, room_type, model_id) VALUES (?, ?, ?, ?)
+    ON CONFLICT (floor_record_id, room_order) DO NOTHING
+  `);
+  const addMonster = db.prepare('INSERT INTO RoomMonsters VALUES (?, ?, ?)');
+
+  function saveRooms(floorId, rooms) {
+    let saved = 0;
+    for (const room of rooms) {
+      const { changes, lastInsertRowid: roomId } = addRoom.run(floorId, room.order, room.roomType, room.modelId);
+      if (!changes) continue;
+      for (const monster of room.monsters) addMonster.run(roomId, monster.order, monster.id);
+      saved += 1;
+    }
+    return saved;
+  }
   const addAction = db.prepare("INSERT INTO RunActions VALUES (?, 'rest', ?, ?)");
   const addRunRelic = db.prepare('INSERT INTO RunRelics VALUES (?, ?, ?, ?)');
-  const addDeckCard = db.prepare('INSERT INTO RunDeckCards VALUES (?, ?, ?, ?)');
+  const addDeckCard = db.prepare('INSERT INTO RunDeckCards VALUES (?, ?, ?, ?, ?, ?)');
+  const fillDeckEnchantment = db.prepare(`
+    UPDATE RunDeckCards SET enchantment_id = ?, enchantment_amount = ?
+    WHERE run_id = ? AND card_order = ? AND card_id = ? AND enchantment_id IS NULL
+  `);
   const runColumns = 'run_id, character_id, play_mode, game_mode, player_count, ascension, result';
   const findRun = db.prepare(`SELECT ${runColumns}, defeat_cause, build_id FROM Runs WHERE run_id = ?`);
   const listRuns = db.prepare(`
@@ -60,12 +91,42 @@ function openDatabase(filename) {
     ORDER BY run_id DESC
   `);
   const listCharacters = db.prepare('SELECT DISTINCT character_id FROM Runs ORDER BY character_id');
+  const dashboardCounts = `
+    COUNT(run_id) AS total,
+    COUNT(*) FILTER (WHERE result = 'win') AS wins,
+    COUNT(*) FILTER (WHERE result IN ('win', 'loss')) AS decided,
+    1.0 * COUNT(*) FILTER (WHERE result = 'win') /
+      NULLIF(COUNT(*) FILTER (WHERE result IN ('win', 'loss')), 0) AS win_rate
+  `;
+  const dashboard = db.prepare(`
+    SELECT NULL AS play_mode, NULL AS character_id, ${dashboardCounts} FROM Runs
+    UNION ALL
+    SELECT modes.play_mode, NULL, ${dashboardCounts}
+    FROM (SELECT 'single' AS play_mode UNION ALL SELECT 'multi') AS modes
+    LEFT JOIN Runs ON Runs.play_mode = modes.play_mode
+    GROUP BY modes.play_mode
+    UNION ALL
+    SELECT play_mode, character_id, ${dashboardCounts}
+    FROM Runs GROUP BY play_mode, character_id
+    ORDER BY play_mode, character_id
+  `);
   const findFloors = db.prepare(`
-    SELECT act_number, visit_order, map_point_type, room_type, current_hp, max_hp, current_gold
+    SELECT floor_record_id, act_number, visit_order, map_point_type, room_type, current_hp, max_hp, current_gold
     FROM FloorRecords WHERE run_id = ? ORDER BY act_number, visit_order
   `);
+  const findRooms = db.prepare(`
+    SELECT VisitRooms.floor_record_id, VisitRooms.room_type, VisitRooms.model_id,
+           (SELECT json_group_array(monster_id ORDER BY monster_order)
+            FROM RoomMonsters WHERE visit_room_id = VisitRooms.visit_room_id) AS monsters
+    FROM VisitRooms JOIN FloorRecords USING (floor_record_id)
+    WHERE FloorRecords.run_id = ?
+    ORDER BY VisitRooms.floor_record_id, room_order
+  `);
   const findRelics = db.prepare('SELECT relic_id, added_floor FROM RunRelics WHERE run_id = ? ORDER BY relic_order');
-  const findDeck = db.prepare('SELECT card_id, upgrade_level FROM RunDeckCards WHERE run_id = ? ORDER BY card_order');
+  const findDeck = db.prepare(`
+    SELECT card_id, upgrade_level, enchantment_id, enchantment_amount
+    FROM RunDeckCards WHERE run_id = ? ORDER BY card_order
+  `);
   const deleteRun = db.prepare('DELETE FROM Runs WHERE run_id = ?');
 
   return {
@@ -73,7 +134,20 @@ function openDatabase(filename) {
       const hash = createHash('sha256').update(bytes).digest('hex');
       return transaction(() => {
         const existing = findHash.get(hash);
-        if (existing) return { status: 'duplicate', runId: existing.run_id };
+        if (existing) {
+          let updated = 0;
+          for (const card of run.deck) {
+            if (!card.enchantmentId) continue;
+            updated += fillDeckEnchantment.run(card.enchantmentId, card.enchantmentAmount ?? null,
+              existing.run_id, card.order, card.cardId).changes;
+          }
+          let roomsUpdated = 0;
+          for (const floor of run.floors) {
+            const saved = findFloorId.get(existing.run_id, floor.actNumber, floor.visitOrder);
+            if (saved) roomsUpdated += saveRooms(saved.floor_record_id, floor.rooms ?? []);
+          }
+          return { status: 'duplicate', runId: existing.run_id, enchantmentsUpdated: updated, roomsUpdated };
+        }
 
         addCharacter.run(run.characterId);
         const { lastInsertRowid: runId } = addRun.run(hash, run.characterId, run.playMode,
@@ -83,6 +157,7 @@ function openDatabase(filename) {
           const { lastInsertRowid: floorId } = addFloor.run(runId, floor.actNumber,
             floor.visitOrder, floor.mapPointType, floor.roomType, floor.currentHp,
             floor.maxHp, floor.currentGold);
+          saveRooms(floorId, floor.rooms ?? []);
           for (const card of floor.cardChoices) {
             addCard.run(card.cardId);
             addChoice.run(floorId, card.order, card.cardId, card.roomType,
@@ -96,7 +171,8 @@ function openDatabase(filename) {
         }
         for (const card of run.deck) {
           addCard.run(card.cardId);
-          addDeckCard.run(runId, card.order, card.cardId, card.upgradeLevel);
+          addDeckCard.run(runId, card.order, card.cardId, card.upgradeLevel,
+            card.enchantmentId ?? null, card.enchantmentId ? card.enchantmentAmount ?? null : null);
         }
         return { status: 'imported', runId };
       });
@@ -107,10 +183,21 @@ function openDatabase(filename) {
         characters: listCharacters.all().map((row) => row.character_id),
       };
     },
+    dashboard() {
+      return dashboard.all();
+    },
     detail(id) {
       const run = findRun.get(id);
       if (!run) return null;
-      return { run, floors: findFloors.all(id), relics: findRelics.all(id), deck: findDeck.all(id) };
+      const roomsByFloor = new Map();
+      for (const { floor_record_id: floorId, monsters, ...room } of findRooms.all(id)) {
+        if (!roomsByFloor.has(floorId)) roomsByFloor.set(floorId, []);
+        roomsByFloor.get(floorId).push({ ...room, monster_ids: JSON.parse(monsters) });
+      }
+      const floors = findFloors.all(id).map(({ floor_record_id: floorId, ...floor }) => ({
+        ...floor, rooms: roomsByFloor.get(floorId) ?? [],
+      }));
+      return { run, floors, relics: findRelics.all(id), deck: findDeck.all(id) };
     },
     delete(id) {
       return deleteRun.run(id).changes > 0;

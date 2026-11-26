@@ -47,6 +47,8 @@ function extractRun(run, player) {
     cardId: readIdentifier(card?.id, '카드'),
     order: index + 1,
     upgradeLevel: nonnegativeInteger(card.current_upgrade_level),
+    enchantmentId: typeof card.enchantment?.id === 'string' ? card.enchantment.id.trim() || null : null,
+    enchantmentAmount: nonnegativeInteger(card.enchantment?.amount),
   }));
   const result = getRunResult(run);
   const defeatCause = [run.killed_by_encounter, run.killed_by_event]
@@ -92,6 +94,15 @@ function extractFloor(visit, actNumber, visitOrder, playerId) {
     visitOrder,
     mapPointType: typeof visit.map_point_type === 'string' ? visit.map_point_type : null,
     roomType,
+    rooms: rooms.map((room, index) => ({
+      order: index + 1,
+      roomType: typeof room?.room_type === 'string' ? room.room_type : null,
+      modelId: typeof room?.model_id === 'string' ? room.model_id.trim() || null : null,
+      monsters: readArray(room?.monster_ids, '몬스터 목록').map((id, order) => ({
+        id: readIdentifier(id, '몬스터'),
+        order: order + 1,
+      })),
+    })),
     currentHp: nonnegativeInteger(ownStats?.current_hp),
     maxHp: nonnegativeInteger(ownStats?.max_hp),
     currentGold: nonnegativeInteger(ownStats?.current_gold),

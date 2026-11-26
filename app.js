@@ -1,12 +1,15 @@
 const form = document.querySelector('#run-form');
 const playerIdInput = document.querySelector('#player-id');
-const fileInput = document.querySelector('#run-file');
+const folderInput = document.querySelector('#profile-folder');
+const importButton = form.querySelector('button[type="submit"]');
 const importStatus = document.querySelector('#status');
 const importResults = document.querySelector('#import-results');
 const filters = document.querySelector('#filters');
 const characterFilter = document.querySelector('#character-filter');
 const records = document.querySelector('#records');
 const recordsStatus = document.querySelector('#records-status');
+const dashboard = document.querySelector('#dashboard');
+const dashboardStatus = document.querySelector('#dashboard-status');
 const detail = document.querySelector('#detail');
 const detailTitle = document.querySelector('#detail-title');
 const detailContent = document.querySelector('#detail-content');
@@ -32,16 +35,11 @@ const placeLabels = new Map([
   ['ancient', '고대의 존재'],
   ['unknown', '미지의 방'],
 ]);
-const playerIdKey = 'spire-analytics.player-id';
+let selectedRunFiles = [];
 let listRequest = 0;
+let dashboardRequest = 0;
 let detailRequest = 0;
 let activeRun = null;
-
-try {
-  playerIdInput.value = localStorage.getItem(playerIdKey) || '';
-} catch {
-  // The current import can still use the typed ID.
-}
 
 function displayId(value) {
   return value || '확인 불가';
@@ -69,13 +67,36 @@ async function api(path, options) {
   return payload;
 }
 
+folderInput.addEventListener('change', () => {
+  const files = Array.from(folderInput.files);
+  const folderName = files[0]?.webkitRelativePath.split('/')[0] ?? '';
+  selectedRunFiles = [];
+  playerIdInput.value = '';
+  importButton.disabled = true;
+  importResults.replaceChildren();
+  importResults.hidden = true;
+
+  if (!/^\d+$/.test(folderName)) {
+    importStatus.textContent = files.length
+      ? 'Steam 폴더 아래의 숫자 ID 폴더를 선택하세요.'
+      : '선택한 폴더에서 파일을 찾지 못했습니다.';
+    return;
+  }
+
+  playerIdInput.value = folderName;
+  selectedRunFiles = files.filter((file) => /\.run$/i.test(file.name));
+  importButton.disabled = selectedRunFiles.length === 0;
+  importStatus.textContent = selectedRunFiles.length
+    ? `.run 파일 ${selectedRunFiles.length}개를 찾았습니다.`
+    : '선택한 폴더와 하위 폴더에 .run 파일이 없습니다.';
+});
+
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
-  const files = Array.from(fileInput.files);
-  if (!files.length) return;
+  if (importButton.disabled) return;
+  const files = selectedRunFiles;
   const playerId = playerIdInput.value.trim();
-  const submit = form.querySelector('button');
-  for (const control of [fileInput, playerIdInput, submit]) control.disabled = true;
+  for (const control of [folderInput, playerIdInput, importButton]) control.disabled = true;
   importResults.replaceChildren();
   importResults.hidden = false;
   const totals = { imported: 0, duplicate: 0, failed: 0 };
@@ -83,35 +104,87 @@ form.addEventListener('submit', async (event) => {
     for (const [index, file] of files.entries()) {
       importStatus.textContent = `${index + 1}/${files.length} 파일 처리 중…`;
       const row = element('li');
+      const relativeName = file.webkitRelativePath.split('/').slice(1).join('/');
       try {
-        if (!/\.run$/i.test(file.name)) throw new Error('.run 파일을 선택해 주세요.');
-        const headers = { 'Content-Type': 'application/octet-stream' };
-        if (/^\d+$/.test(playerId)) headers['X-Player-Id'] = playerId;
+        const headers = { 'Content-Type': 'application/octet-stream', 'X-Player-Id': playerId };
         const query = new URLSearchParams({ filename: file.name });
         const result = await api(`/api/import?${query}`, { method: 'POST', headers, body: file });
         totals[result.status] += 1;
-        const label = result.status === 'imported' ? '저장 완료' : '이미 저장된 파일';
-        row.append(element('span', `${file.name} · ${label}`),
+        const additions = [];
+        if (result.roomsUpdated) additions.push('방문 정보');
+        if (result.enchantmentsUpdated) additions.push('인챈트 정보');
+        const label = result.status === 'imported' ? '저장 완료' :
+          additions.length ? `기존 기록에 ${additions.join('·')} 추가` : '이미 저장된 파일';
+        row.append(element('span', `${relativeName} · ${label}`),
           action('기록 보기', () => showDetail(result.runId)));
-        if (result.status === 'imported' && result.playMode === 'multi') {
-          try {
-            localStorage.setItem(playerIdKey, playerId);
-          } catch {
-            // Storage may be unavailable in this browser.
-          }
-        }
       } catch (error) {
         totals.failed += 1;
-        row.append(element('span', `${file.name} · 실패 (${error.message})`));
+        row.append(element('span', `${relativeName} · 실패 (${error.message})`));
       }
       importResults.append(row);
     }
     importStatus.textContent = `저장 ${totals.imported}개 · 중복 ${totals.duplicate}개 · 실패 ${totals.failed}개`;
-    await loadRecords();
+    await Promise.all([loadRecords(), loadDashboard()]);
   } finally {
-    for (const control of [fileInput, playerIdInput, submit]) control.disabled = false;
+    for (const control of [folderInput, playerIdInput, importButton]) control.disabled = false;
   }
 });
+
+const winRateFormat = new Intl.NumberFormat('ko-KR', { style: 'percent', maximumFractionDigits: 1 });
+
+function scoreText({ total, wins, decided, win_rate }) {
+  const rate = win_rate === null ? '산출 불가' : winRateFormat.format(win_rate);
+  return `총 ${total}런 · 승률 ${rate} (${wins}/${decided})`;
+}
+
+function showCharacterRuns(mode, character) {
+  if (!Array.from(characterFilter.options).some((option) => option.value === character)) {
+    characterFilter.add(new Option(character, character));
+  }
+  characterFilter.value = character;
+  filters.elements.mode.value = mode;
+  filters.elements.ascension.value = '';
+  filters.elements.result.value = '';
+  loadRecords();
+  document.querySelector('#records-title').focus();
+}
+
+async function loadDashboard() {
+  const request = ++dashboardRequest;
+  dashboardStatus.textContent = '성적을 불러오는 중…';
+  try {
+    const { groups, characterNames } = await api('/api/dashboard');
+    if (request !== dashboardRequest) return;
+    const overall = groups.find((group) => group.play_mode === null);
+    const modes = element('div');
+    modes.className = 'dashboard-modes';
+    for (const [mode, label] of Object.entries(modeLabels)) {
+      const summary = groups.find((group) => group.play_mode === mode && group.character_id === null);
+      const characters = groups.filter((group) => group.play_mode === mode && group.character_id !== null);
+      const panel = element('div');
+      panel.className = 'dashboard-mode';
+      panel.append(element('h3', label), element('p', scoreText(summary)));
+      const list = element('ul');
+      list.className = 'record-list';
+      for (const group of characters) {
+        const id = group.character_id;
+        const name = Object.hasOwn(characterNames, id) ? characterNames[id] : id;
+        const row = element('li');
+        row.append(action(`${name} · ${scoreText(group)}`, () => showCharacterRuns(mode, id)));
+        list.append(row);
+      }
+      if (characters.length) panel.append(list);
+      modes.append(panel);
+    }
+    dashboard.replaceChildren(element('p', `전체 · ${scoreText(overall)}`),
+      element('p', '괄호 안은 승리 수 / 승패가 확인된 런 수입니다.'), modes);
+    dashboardStatus.textContent = overall.total ? '' : '저장된 기록이 없습니다.';
+  } catch (error) {
+    if (request !== dashboardRequest) return;
+    dashboard.replaceChildren();
+    dashboardStatus.textContent = error.message;
+  }
+}
 
 async function loadRecords() {
   const request = ++listRequest;
@@ -148,13 +221,174 @@ filters.addEventListener('submit', (event) => {
 });
 filters.addEventListener('reset', () => setTimeout(loadRecords, 0));
 
-function detailList(title, items) {
-  const section = element('details');
-  const list = element('ol');
-  for (const item of items) list.append(element('li', item));
-  section.append(element('summary', `${title} · ${items.length}건`),
-    items.length ? list : element('p', '확인 가능한 기록이 없습니다.'));
+function visitImage(source) {
+  const image = element('img');
+  image.alt = '';
+  image.loading = 'lazy';
+  image.referrerPolicy = 'no-referrer';
+  image.addEventListener('error', () => image.remove(), { once: true });
+  image.src = source;
+  return image;
+}
+
+function visitRoom(room) {
+  const section = element('div');
+  section.className = 'visit-room';
+  const artwork = element('div');
+  artwork.className = 'visit-art';
+  const monsters = new Map();
+  for (const monster of room.monsters ?? []) {
+    const entry = monsters.get(monster.id);
+    if (entry) entry.count += 1;
+    else monsters.set(monster.id, { ...monster, count: 1 });
+  }
+  if (room.image_url) artwork.append(visitImage(room.image_url));
+  for (const monster of monsters.values()) {
+    if (monster.image_url) artwork.append(visitImage(monster.image_url));
+  }
+  const place = placeLabels.get(room.room_type) ?? room.room_type ?? '장소 확인 불가';
+  const name = room.name ?? room.model_id;
+  section.append(artwork, element('h4', name ? `${place} · ${name}` : place));
+  if (monsters.size) {
+    const names = Array.from(monsters.values(), (monster) =>
+      (monster.name ?? monster.id) + (monster.count > 1 ? ` × ${monster.count}` : ''));
+    section.append(element('p', names.join(', ')));
+  }
   return section;
+}
+
+function visitPath(floors) {
+  const path = element('details');
+  path.append(element('summary', `방문 경로 · ${floors.length}곳`));
+  if (!floors.length) path.append(element('p', '확인 가능한 방문 기록이 없습니다.'));
+  const acts = new Map();
+  for (const floor of floors) {
+    if (!acts.has(floor.act_number)) acts.set(floor.act_number, []);
+    acts.get(floor.act_number).push(floor);
+  }
+  for (const [act, visits] of acts) {
+    const group = element('details');
+    group.className = 'visit-act';
+    const list = element('ol');
+    list.className = 'visit-list';
+    for (const floor of visits) {
+      const tile = element('li');
+      const rooms = floor.rooms?.length ? floor.rooms :
+        [{ room_type: floor.room_type ?? floor.map_point_type }];
+      for (const room of rooms) tile.append(visitRoom(room));
+      tile.append(element('p', `${floor.visit_order}번째 방문 · 체력 ${floor.current_hp ?? '—'}/${floor.max_hp ?? '—'} · 골드 ${floor.current_gold ?? '—'}`));
+      list.append(tile);
+    }
+    group.append(element('summary', `${act}막 · ${visits.length}곳`), list);
+    path.append(group);
+  }
+  path.open = true;
+  return path;
+}
+
+function relicDetails(relics) {
+  const details = element('details');
+  details.append(element('summary', `최종 유물 · ${relics.length}개`));
+  if (!relics.length) {
+    details.append(element('p', '확인 가능한 유물이 없습니다.'));
+    return details;
+  }
+  const grid = element('ul');
+  grid.className = 'relic-grid';
+  for (const relic of relics) {
+    const tile = element('li');
+    const artwork = element('div');
+    artwork.className = 'relic-art';
+    const placeholder = element('span', '이미지 없음');
+    artwork.append(placeholder);
+    if (relic.image_url) {
+      const image = element('img');
+      image.alt = '';
+      image.loading = 'lazy';
+      image.referrerPolicy = 'no-referrer';
+      image.addEventListener('load', () => { placeholder.hidden = true; }, { once: true });
+      image.addEventListener('error', () => image.remove(), { once: true });
+      artwork.append(image);
+      image.src = relic.image_url;
+    }
+    const effect = element('p', relic.description || '효과 설명 없음');
+    effect.className = 'relic-effect';
+    tile.append(artwork, element('strong', relic.name ?? displayId(relic.relic_id)), effect);
+    grid.append(tile);
+  }
+  details.open = true;
+  details.append(grid);
+  return details;
+}
+
+function deckDetails(deck) {
+  const groups = new Map();
+  for (const card of deck) {
+    const key = JSON.stringify([card.card_id, card.upgrade_level, card.enchantment_id, card.enchantment_amount]);
+    const group = groups.get(key);
+    if (group) group.count += 1;
+    else groups.set(key, { ...card, count: 1 });
+  }
+  const details = element('details');
+  details.append(element('summary', `최종 덱 · ${deck.length}장`));
+  if (!groups.size) {
+    details.append(element('p', '확인 가능한 카드가 없습니다.'));
+    return details;
+  }
+  const grid = element('ul');
+  grid.className = 'deck-grid';
+  for (const card of groups.values()) {
+    const tile = element('li');
+    const artwork = element('div');
+    artwork.className = 'deck-art';
+    const placeholder = element('span', '이미지 없음');
+    artwork.append(placeholder);
+    const effect = element('p', card.description);
+    effect.className = 'deck-effect';
+    effect.hidden = Boolean(card.full_image_url) || !card.description;
+    if (card.full_image_url || card.image_url) {
+      const image = element('img');
+      image.alt = '';
+      image.loading = 'lazy';
+      image.referrerPolicy = 'no-referrer';
+      image.style.visibility = 'hidden';
+      image.addEventListener('load', () => {
+        placeholder.hidden = true;
+        image.style.visibility = '';
+        if (card.full_image_url && !artwork.classList.contains('portrait')) {
+          image.alt = card.description ?? '';
+        }
+      });
+      artwork.classList.toggle('portrait', !card.full_image_url);
+      image.addEventListener('error', () => {
+        if (!artwork.classList.contains('portrait')) {
+          artwork.classList.add('portrait');
+          effect.hidden = !card.description;
+          if (card.image_url) {
+            image.src = card.image_url;
+            return;
+          }
+        }
+        image.remove();
+      });
+      image.src = card.full_image_url || card.image_url;
+      artwork.append(image);
+    }
+    const upgrade = card.upgrade_level > 0 ? '+' : '';
+    const enchantment = card.enchantment_id
+      ? ` (${card.enchantment_effect || card.enchantment_name || card.enchantment_id})`
+      : '';
+    const quantity = card.count > 1 ? ` × ${card.count}` : '';
+    const label = element(card.upgrade_level > 0 ? 'strong' : 'span',
+      (card.name ?? displayId(card.card_id)) + upgrade + enchantment + quantity);
+    label.className = 'deck-label';
+    label.dataset.rarity = card.rarity ?? '';
+    tile.append(artwork, label, effect);
+    grid.append(tile);
+  }
+  details.open = true;
+  details.append(grid);
+  return details;
 }
 
 async function showDetail(id) {
@@ -181,16 +415,9 @@ async function showDetail(id) {
       summary.append(element('dt', label), element('dd', value ?? '확인 불가'));
     }
     detailContent.replaceChildren(summary,
-      detailList('방문 경로', floors.map((floor) => {
-        const place = floor.room_type ?? floor.map_point_type;
-        const label = placeLabels.get(place) ?? place ?? '장소 확인 불가';
-        return `${floor.act_number}막 ${floor.visit_order}번째 · ${label} · 체력 ${floor.current_hp ?? '—'}/${floor.max_hp ?? '—'} · 골드 ${floor.current_gold ?? '—'}`;
-      })),
-      detailList('최종 유물', relics.map((relic) => relic.name ?? displayId(relic.relic_id))),
-      detailList('최종 덱', deck.map((card) => {
-        const upgrade = card.upgrade_level > 0 ? ` +${card.upgrade_level}` : '';
-        return (card.name ?? displayId(card.card_id)) + upgrade;
-      })));
+      visitPath(floors),
+      relicDetails(relics),
+      deckDetails(deck));
     activeRun = id;
     deleteButton.hidden = false;
   } catch (error) {
@@ -209,7 +436,7 @@ deleteButton.addEventListener('click', async () => {
       activeRun = null;
       detail.hidden = true;
     }
-    await loadRecords();
+    await Promise.all([loadRecords(), loadDashboard()]);
     importStatus.textContent = '기록을 삭제했습니다.';
   } catch (error) {
     importStatus.textContent = error.message;
@@ -219,3 +446,4 @@ deleteButton.addEventListener('click', async () => {
 });
 
 loadRecords();
+loadDashboard();

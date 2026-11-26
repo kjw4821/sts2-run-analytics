@@ -4,6 +4,17 @@ const { join } = require('node:path');
 const { DatabaseSync } = require('node:sqlite');
 const { connectTurso } = require('./turso');
 
+const accountMigration = [
+  'CREATE TABLE Users (id INTEGER PRIMARY KEY, username TEXT UNIQUE COLLATE NOCASE, password_hash TEXT)',
+  'INSERT INTO Users (id) VALUES (1)',
+  'CREATE TABLE Sessions (token TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES Users(id), expires INTEGER NOT NULL)',
+  'CREATE INDEX sessions_expiry ON Sessions(expires)',
+  'ALTER TABLE Runs RENAME COLUMN source_hash TO storage_key',
+  'ALTER TABLE Runs ADD COLUMN user_id INTEGER REFERENCES Users(id)',
+  'ALTER TABLE Runs ADD COLUMN source_hash TEXT',
+  'UPDATE Runs SET source_hash = storage_key, user_id = 1',
+  'CREATE UNIQUE INDEX owner_run_hash ON Runs(user_id, source_hash)',
+];
 function openDatabase(filename) {
   const db = new DatabaseSync(filename);
   db.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
@@ -30,7 +41,7 @@ function openDatabase(filename) {
           ALTER TABLE RunDeckCards ADD COLUMN enchantment_id TEXT;
           ALTER TABLE RunDeckCards ADD COLUMN enchantment_amount INTEGER CHECK (enchantment_amount >= 0);
         `);
-      } else if (version !== 2 && version !== 3 && version !== 4) {
+      } else if (version !== 2 && version !== 3 && version !== 4 && version !== 5) {
         throw new Error(`지원하지 않는 DB 버전입니다. (${version})`);
       }
       if (version < 3) {
@@ -41,6 +52,10 @@ function openDatabase(filename) {
       }
       if (version < 4) {
         db.exec('PRAGMA user_version = 4');
+      }
+      if (version < 5) {
+        accountMigration.forEach(sql => db.exec(sql));
+        db.exec('PRAGMA user_version = 5');
       }
     });
   } catch (error) {
@@ -69,12 +84,16 @@ async function openTursoDatabase(url, token, request) {
   await db.transaction(async (execute) => {
     await execute([['CREATE TABLE IF NOT EXISTS SpireSchemaVersion (version INTEGER NOT NULL)']]);
     const [{ rows: versions }] = await execute([['SELECT version FROM SpireSchemaVersion']]);
-    if (versions.length === 1 && versions[0].version === 4) return;
+    if (versions.length === 1 && versions[0].version === 5) return;
+    if (versions.length === 1 && versions[0].version === 4) {
+      await execute([...accountMigration.map(sql => [sql]), ['UPDATE SpireSchemaVersion SET version = 5']]);
+      return;
+    }
     if (versions.length) throw new Error('Unsupported Turso schema version.');
     const schema = ['schema.sql', 'visit-rooms.sql']
       .flatMap((name) => readFileSync(join(__dirname, name), 'utf8').split(';'))
       .map((sql) => sql.trim()).filter((sql) => sql && !sql.startsWith('PRAGMA foreign_keys'));
-    await execute([...schema.map((sql) => [sql]), ['INSERT INTO SpireSchemaVersion VALUES (4)']]);
+    await execute([...schema.map((sql) => [sql]), ...accountMigration.map(sql => [sql]), ['INSERT INTO SpireSchemaVersion VALUES (5)']]);
   });
 
   const adapter = {
@@ -97,16 +116,16 @@ async function openTursoDatabase(url, token, request) {
   }));
 }
 
-function* importOperations(hash, run) {
-  const [{ rows: [existing] }] = yield [['SELECT run_id FROM Runs WHERE source_hash = ?', [hash]]];
+function* importOperations(hash, run, owner) {
+  const [{ rows: [existing] }] = yield [['SELECT run_id FROM Runs WHERE source_hash = ? AND user_id = ?', [hash, owner]]];
   let runId = existing?.run_id;
   if (!existing) {
     const [, { rows: [saved] }] = yield [
       ['INSERT INTO Characters VALUES (?) ON CONFLICT DO NOTHING', [run.characterId]],
-      [`INSERT INTO Runs (source_hash, character_id, play_mode, game_mode, player_count,
+      [`INSERT INTO Runs (storage_key, user_id, source_hash, character_id, play_mode, game_mode, player_count,
                           ascension, result, defeat_cause, build_id, schema_version, start_time)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING run_id`,
-      [hash, run.characterId, run.playMode, run.gameMode, run.playerCount, run.ascension,
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING run_id`,
+      [owner + ":" + hash, owner, hash, run.characterId, run.playMode, run.gameMode, run.playerCount, run.ascension,
         run.result, run.defeatCause, run.buildId, run.schemaVersion, run.startTime ?? null]],
     ];
     runId = saved.run_id;
@@ -199,14 +218,14 @@ function* importOperations(hash, run) {
 
 function createStore(db, write) {
   const runColumns = 'run_id, character_id, play_mode, game_mode, player_count, ascension, result, start_time';
-  const findRun = db.prepare(`SELECT ${runColumns}, defeat_cause, build_id FROM Runs WHERE run_id = ?`);
+  const findRun = db.prepare(`SELECT ${runColumns}, defeat_cause, build_id FROM Runs WHERE run_id = ? AND user_id = ?`);
   const listRuns = db.prepare(`
     SELECT ${runColumns} FROM Runs
-    WHERE (? IS NULL OR character_id = ?) AND (? IS NULL OR play_mode = ?)
+    WHERE user_id = ? AND (? IS NULL OR character_id = ?) AND (? IS NULL OR play_mode = ?)
       AND (? IS NULL OR ascension = ?) AND (? IS NULL OR result = ?)
     ORDER BY run_id DESC
   `);
-  const listCharacters = db.prepare('SELECT DISTINCT character_id FROM Runs ORDER BY character_id');
+  const listCharacters = db.prepare('SELECT DISTINCT character_id FROM Runs WHERE user_id = ? ORDER BY character_id');
   const dashboardCounts = `
     COUNT(run_id) AS total,
     COUNT(*) FILTER (WHERE result = 'win') AS wins,
@@ -215,15 +234,16 @@ function createStore(db, write) {
       NULLIF(COUNT(*) FILTER (WHERE result IN ('win', 'loss')), 0) AS win_rate
   `;
   const dashboard = db.prepare(`
-    SELECT NULL AS play_mode, NULL AS character_id, ${dashboardCounts} FROM Runs
+    WITH owned AS (SELECT * FROM Runs WHERE user_id = ?)
+    SELECT NULL AS play_mode, NULL AS character_id, ${dashboardCounts} FROM owned
     UNION ALL
     SELECT modes.play_mode, NULL, ${dashboardCounts}
     FROM (SELECT 'single' AS play_mode UNION ALL SELECT 'multi') AS modes
-    LEFT JOIN Runs ON Runs.play_mode = modes.play_mode
+    LEFT JOIN owned ON owned.play_mode = modes.play_mode
     GROUP BY modes.play_mode
     UNION ALL
     SELECT play_mode, character_id, ${dashboardCounts}
-    FROM Runs GROUP BY play_mode, character_id
+    FROM owned GROUP BY play_mode, character_id
     ORDER BY play_mode, character_id
   `);
   const cardAnalysis = db.prepare(`
@@ -233,7 +253,7 @@ function createStore(db, write) {
     FROM CardChoices
     JOIN FloorRecords USING (floor_record_id)
     JOIN Runs USING (run_id)
-    WHERE CardChoices.room_type IN ('monster', 'elite', 'boss')
+    WHERE Runs.user_id = $owner AND CardChoices.room_type IN ('monster', 'elite', 'boss')
       AND was_picked IS NOT NULL
       AND ($character IS NULL OR character_id = $character)
       AND ($mode IS NULL OR play_mode = $mode)
@@ -244,7 +264,7 @@ function createStore(db, write) {
   const tendencyAnalysis = db.prepare(`
     WITH matching_runs AS (
       SELECT run_id FROM Runs
-      WHERE ($character IS NULL OR character_id = $character)
+      WHERE user_id = $owner AND ($character IS NULL OR character_id = $character)
         AND ($mode IS NULL OR play_mode = $mode)
         AND ($ascension IS NULL OR ascension = $ascension)
         AND ($result IS NULL OR result = $result)
@@ -306,43 +326,58 @@ function createStore(db, write) {
     SELECT card_id, upgrade_level, enchantment_id, enchantment_amount
     FROM RunDeckCards WHERE run_id = ? ORDER BY card_order
   `);
-  const deleteRunSql = 'DELETE FROM Runs WHERE run_id = ?';
+  const deleteRunSql = 'DELETE FROM Runs WHERE run_id = ? AND user_id = ?';
 
-  async function readTendency({ character, mode, ascension }, result = null) {
-    const [analysis] = await tendencyAnalysis.all({ character, mode, ascension, result });
+  async function readTendency({ character, mode, ascension }, result = null, owner) {
+    const [analysis] = await tendencyAnalysis.all({ character, mode, ascension, result, owner });
     return { ...analysis, rest_actions: JSON.parse(analysis.rest_actions) };
   }
 
   return {
-    importRun(bytes, run) {
-      const hash = createHash('sha256').update(bytes).digest('hex');
-      return write(() => importOperations(hash, run));
+    changePassword(id, previous, replacement) {
+      return write(function* () {
+        const [updated] = yield [['UPDATE Users SET password_hash = ? WHERE id = ? AND password_hash = ?', [replacement, id, previous]]];
+        if (!updated.changes) return false;
+        yield [['DELETE FROM Sessions WHERE user_id = ?', [id]]];
+        return true;
+      });
     },
-    async list({ character, mode, ascension, result }) {
+    account(sql, args) {
+      if (sql.startsWith('SELECT ')) return db.prepare(sql).get(...args);
+      return write(function* () {
+        const [result] = yield [[sql, args]];
+        return result.rows?.[0];
+      });
+    },
+    importRun(bytes, run, owner = 1) {
+      const hash = createHash('sha256').update(bytes).digest('hex');
+      return write(() => importOperations(hash, run, owner));
+    },
+    async list({ character, mode, ascension, result }, owner = 1) {
       return {
-        runs: await listRuns.all(character, character, mode, mode, ascension, ascension, result, result),
-        characters: (await listCharacters.all()).map((row) => row.character_id),
+        runs: await listRuns.all(owner, character, character, mode, mode, ascension, ascension, result, result),
+        characters: (await listCharacters.all(owner)).map((row) => row.character_id),
       };
     },
-    dashboard() {
-      return dashboard.all();
+    dashboard(owner = 1) {
+      return dashboard.all(owner);
     },
-    cardAnalysis({ character, mode, ascension }) {
-      return cardAnalysis.all({ character, mode, ascension });
+    cardAnalysis({ character, mode, ascension }, owner = 1) {
+      return cardAnalysis.all({ character, mode, ascension, owner });
     },
-    async tendencyAnalysis(filters) {
-      const analysis = await readTendency(filters);
+    async tendencyAnalysis(filters, owner = 1) {
+      const analysis = await readTendency(filters, null, owner);
       if (filters.character === null || filters.ascension === null) return analysis;
       return {
         ...analysis,
         comparison: {
-          win: await readTendency(filters, 'win'),
-          loss: await readTendency(filters, 'loss'),
+          win: await readTendency(filters, 'win', owner),
+          loss: await readTendency(filters, 'loss', owner),
         },
       };
     },
-    async detail(id) {
-      const run = await findRun.get(id);
+    async detail(id, owner = 1) {
+      const run = await findRun.get(id, owner);
       if (!run) return null;
       const roomsByFloor = new Map();
       for (const { floor_record_id: floorId, monsters, ...room } of await findRooms.all(id)) {
@@ -354,9 +389,9 @@ function createStore(db, write) {
       }));
       return { run, floors, relics: await findRelics.all(id), deck: await findDeck.all(id) };
     },
-    delete(id) {
+    delete(id, owner = 1) {
       return write(function* () {
-        const [result] = yield [[deleteRunSql, [id]]];
+        const [result] = yield [[deleteRunSql, [id, owner]]];
         return result.changes > 0;
       });
     },

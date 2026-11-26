@@ -30,6 +30,6 @@ GitHub 저장소를 Render Web Service에 연결하고 Runtime은 Node, Build Co
 | `SPIRE_AUTH_USER` | 브라우저 로그인에 쓸 사용자 이름 |
 | `SPIRE_AUTH_PASSWORD` | 브라우저 로그인에 쓸 24자 이상의 무작위 비밀번호 |
 
-Render가 제공하는 `RENDER_EXTERNAL_URL`과 `PORT`를 사용합니다. 커스텀 도메인으로 접속하려면 `SPIRE_PUBLIC_ORIGIN`에 해당 HTTPS 주소를 설정합니다. 브라우저에서 배포 주소를 열면 HTTP Basic 인증 창이 뜹니다. 화면과 기록 API에 동일한 인증이 적용되며 `/healthz`는 상태 코드만 반환합니다.
+사이트 주소를 열면 로그인 화면이 표시됩니다. 누구나 /signup에서 가입할 수 있으며, 각 계정은 자신의 기록과 통계만 조회합니다. 기존 기록은 SPIRE_AUTH_USER와 SPIRE_AUTH_PASSWORD로 로그인하는 운영자 계정에 연결됩니다. Render에서는 RENDER_EXTERNAL_URL과 PORT를 사용하며 커스텀 도메인은 SPIRE_PUBLIC_ORIGIN에 설정합니다. /healthz는 공개 상태 확인 경로입니다.
 
 비밀번호는 `node -e "console.log(require('node:crypto').randomBytes(24).toString('base64url'))"`로 생성할 수 있습니다. 로컬에서 인증을 확인하려면 두 `SPIRE_AUTH_*` 값을 `.env`에 추가하고 서버를 재시작합니다.

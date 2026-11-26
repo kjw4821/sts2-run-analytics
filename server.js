@@ -1,4 +1,4 @@
-const { createHash, timingSafeEqual } = require('node:crypto');
+const { createHash } = require('node:crypto');
 const { mkdirSync } = require('node:fs');
 const { basename, dirname, join, resolve } = require('node:path');
 const express = require('express');
@@ -6,6 +6,8 @@ const { openDatabase, openTursoDatabase } = require('./database');
 const { createGameNames } = require('./game-names');
 const { createCommunityCardStats } = require('./community-card-stats');
 const { parseRun, selectRunPlayer, extractRun } = require('./run-record');
+
+const { installAccounts } = require('./accounts');
 
 const MAX_FILE_BYTES = 16 * 1024 * 1024;
 function json(response, status, payload) {
@@ -53,7 +55,7 @@ async function importFile(request, response, database) {
   } catch (error) {
     return json(response, 400, { message: error.message });
   }
-  const result = await database.importRun(bytes, record);
+  const result = await database.importRun(bytes, record, request.userId);
   return json(response, result.status === 'imported' ? 201 : 200, { ...result, playMode: record.playMode });
 }
 
@@ -72,7 +74,7 @@ function accessSettings(env) {
   if (publicUrl && (publicUrl.protocol !== 'https:' || publicUrl.href !== publicUrl.origin + '/')) {
     throw new Error('SPIRE_PUBLIC_ORIGIN must be an HTTPS origin without a path.');
   }
-  return { publicUrl, credentials: username ? digest(`${username}:${password}`) : null };
+  return { publicUrl, username, credentials: username ? digest(`${username}:${password}`) : null };
 }
 
 function digest(value) {
@@ -80,7 +82,7 @@ function digest(value) {
 }
 
 function createApp(database, gameNames = createGameNames(), communityCardStats = createCommunityCardStats(),
-  { publicUrl = null, credentials = null } = {}) {
+  { publicUrl = null, username, credentials = null } = {}) {
   const app = express();
   app.disable('x-powered-by');
   app.enable('case sensitive routing');
@@ -97,16 +99,10 @@ function createApp(database, gameNames = createGameNames(), communityCardStats =
         (publicUrl && request.headers['x-forwarded-proto'] !== 'https')) {
       return json(response, 403, { message: '허용된 주소에서 접속해 주세요.' });
     }
-    if (credentials) {
-      const basic = /^Basic ([A-Za-z0-9+/]+={0,2})$/i.exec(request.headers.authorization ?? '');
-      if (!basic || !timingSafeEqual(credentials, digest(Buffer.from(basic[1], 'base64')))) {
-        response.set('WWW-Authenticate', 'Basic realm="Spire Analytics", charset="UTF-8"');
-        return json(response, 401, { message: '로그인이 필요합니다.' });
-      }
-    }
     return next();
   });
 
+  installAccounts(app, database, { publicUrl, username, credentials });
   for (const [route, filename] of [['/', 'index.html'], ['/app.js', 'app.js'], ['/styles.css', 'styles.css']]) {
     app.get(route, (_request, response) => {
       response.set('Cache-Control', credentials ? 'no-store' : 'no-cache').sendFile(filename, { root: __dirname });
@@ -116,8 +112,8 @@ function createApp(database, gameNames = createGameNames(), communityCardStats =
   app.post('/api/import', validateUpload,
     express.raw({ type: 'application/octet-stream', limit: MAX_FILE_BYTES, inflate: false }),
     (request, response) => importFile(request, response, database));
-  app.get('/api/dashboard', async (_request, response) => {
-    const groups = await database.dashboard();
+  app.get('/api/dashboard', async (request, response) => {
+    const groups = await database.dashboard(request.userId);
     const ids = [...new Set(groups.map((group) => group.character_id).filter(Boolean))];
     const names = await gameNames.lookup(ids, 'CHARACTER');
     return json(response, 200, { groups, characterNames: Object.fromEntries(names) });
@@ -125,7 +121,7 @@ function createApp(database, gameNames = createGameNames(), communityCardStats =
   app.get('/api/card-analysis', async (request, response) => {
     const filters = readFilters(new URL(request.originalUrl, 'http://localhost').searchParams);
     if (!filters) return json(response, 400, { message: '필터 값을 확인해 주세요.' });
-    const rows = (await database.cardAnalysis(filters)).filter((row) => row.picked > 0);
+    const rows = (await database.cardAnalysis(filters, request.userId)).filter((row) => row.picked > 0);
     const ids = rows.map((row) => row.card_id);
     const [rarities, types] = await Promise.all([
       gameNames.lookup(ids, 'CARD', 'rarity'),
@@ -154,18 +150,18 @@ function createApp(database, gameNames = createGameNames(), communityCardStats =
   app.get('/api/tendency-analysis', async (request, response) => {
     const filters = readFilters(new URL(request.originalUrl, 'http://localhost').searchParams);
     if (!filters) return json(response, 400, { message: '필터 값을 확인해 주세요.' });
-    return json(response, 200, await database.tendencyAnalysis(filters));
+    return json(response, 200, await database.tendencyAnalysis(filters, request.userId));
   });
   app.get('/api/runs', async (request, response) => {
     const filters = readFilters(new URL(request.originalUrl, 'http://localhost').searchParams);
     if (!filters) return json(response, 400, { message: '필터 값을 확인해 주세요.' });
-    const list = await database.list(filters);
+    const list = await database.list(filters, request.userId);
     const characterNames = await gameNames.lookup(list.characters, 'CHARACTER');
     return json(response, 200, { ...list, characterNames: Object.fromEntries(characterNames) });
   });
   app.get('/api/runs/:id', async (request, response, next) => {
     const id = positiveId(request.params.id);
-    const record = id && await database.detail(id);
+    const record = id && await database.detail(id, request.userId);
     if (!record) return next();
     const { run, floors, relics, deck } = record;
     const [characters, causes, displayRelics, cards, visits] = await Promise.all([
@@ -189,7 +185,7 @@ function createApp(database, gameNames = createGameNames(), communityCardStats =
   });
   app.delete('/api/runs/:id', async (request, response, next) => {
     const id = positiveId(request.params.id);
-    return id && await database.delete(id) ? response.status(204).end() : next();
+    return id && await database.delete(id, request.userId) ? response.status(204).end() : next();
   });
   app.use((_request, response) => json(response, 404, { message: '요청한 기록을 찾을 수 없습니다.' }));
   app.use((error, _request, response, next) => {

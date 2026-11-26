@@ -13,7 +13,7 @@ CREATE TABLE Relics (
 );
 
 CREATE TABLE Runs (
-    run_id INTEGER PRIMARY KEY,
+    run_id INTEGER PRIMARY KEY AUTOINCREMENT,
     source_hash TEXT NOT NULL UNIQUE,
     character_id TEXT NOT NULL REFERENCES Characters(character_id),
     play_mode TEXT NOT NULL,
@@ -21,6 +21,7 @@ CREATE TABLE Runs (
     player_count INTEGER NOT NULL,
     ascension INTEGER CHECK (ascension >= 0),
     result TEXT NOT NULL CHECK (result IN ('win', 'loss', 'abandoned', 'unknown')),
+    defeat_cause TEXT,
     build_id TEXT,
     schema_version INTEGER CHECK (schema_version >= 0),
     CHECK ((play_mode = 'single' AND player_count = 1)
@@ -63,4 +64,12 @@ CREATE TABLE RunRelics (
     relic_id TEXT NOT NULL REFERENCES Relics(relic_id),
     added_floor INTEGER CHECK (added_floor >= 0),
     PRIMARY KEY (run_id, relic_order)
+) STRICT;
+
+CREATE TABLE RunDeckCards (
+    run_id INTEGER NOT NULL REFERENCES Runs(run_id) ON DELETE CASCADE,
+    card_order INTEGER NOT NULL CHECK (card_order >= 1),
+    card_id TEXT NOT NULL REFERENCES Cards(card_id),
+    upgrade_level INTEGER CHECK (upgrade_level >= 0),
+    PRIMARY KEY (run_id, card_order)
 ) STRICT;

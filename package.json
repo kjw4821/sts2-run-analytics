@@ -1,0 +1,22 @@
+{
+  "name": "sts2-run-analytics",
+  "version": "1.0.0",
+  "description": "Node.js 24에서 프로젝트 폴더를 열고 `node server.js`를 실행합니다. [http://127.0.0.1:3000](http://127.0.0.1:3000)에서 `.run` 파일을 한 개 이상 선택합니다. 싱글은 ID 없이, 멀티는 숫자 플레이어 ID로 본인 기록을 가져옵니다. 파일 한 개의 크기 제한은 16 MiB입니다.",
+  "main": "app.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kjw4821/sts2-run-analytics.git"
+  },
+  "keywords": [],
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/kjw4821/sts2-run-analytics/issues"
+  },
+  "homepage": "https://github.com/kjw4821/sts2-run-analytics#readme",
+  "dependencies": {
+    "express": "^5.3.0"
+  }
+}

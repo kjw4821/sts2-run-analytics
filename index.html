@@ -3,39 +3,51 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>플레이 기록 확인 | Spire Analytics</title>
+  <title>플레이 기록 | Spire Analytics</title>
   <link rel="stylesheet" href="styles.css">
-  <script src="run-record.js" defer></script>
   <script src="app.js" defer></script>
 </head>
 <body>
   <main>
     <header>
       <p>Spire Analytics</p>
-      <h1>플레이 기록 확인</h1>
+      <h1>플레이 기록</h1>
     </header>
     <form id="run-form">
       <div>
-        <label class="field-label" for="player-id">플레이어 ID</label>
+        <label class="field-label" for="player-id">플레이어 ID (멀티 기록용)</label>
         <input id="player-id" name="playerId" type="text" inputmode="numeric" autocomplete="off">
       </div>
       <div>
         <label class="field-label" for="run-file">기록 파일 (.run)</label>
-        <input id="run-file" type="file" accept=".run" required>
+        <input id="run-file" type="file" accept=".run" multiple required>
       </div>
-      <button type="submit">기록 확인</button>
+      <button type="submit">기록 가져오기</button>
     </form>
     <p id="status" role="status"></p>
-    <section id="summary" aria-live="polite" aria-labelledby="summary-title" hidden>
-      <h2 id="summary-title">기록 요약</h2>
-      <dl>
-        <dt>플레이 모드</dt><dd id="run-mode"></dd>
-        <dt>참가자 수</dt><dd id="player-count"></dd>
-        <dt>내 캐릭터</dt><dd id="player-character"></dd>
-        <dt>승천 단계</dt><dd id="run-ascension"></dd>
-        <dt>런 결과</dt><dd id="run-result"></dd>
-        <dt>파일명</dt><dd id="selected-file"></dd>
-      </dl>
+    <ul id="import-results" class="record-list" aria-live="polite" hidden></ul>
+    <section aria-labelledby="records-title">
+      <h2 id="records-title">저장된 기록</h2>
+      <form id="filters" class="filters">
+        <label>캐릭터 <select name="character" id="character-filter"><option value="">전체</option></select></label>
+        <label>참가 방식 <select name="mode">
+          <option value="">전체</option><option value="single">싱글</option><option value="multi">멀티</option>
+        </select></label>
+        <label>승천 단계 <input name="ascension" type="number" min="0" step="1" placeholder="전체"></label>
+        <label>결과 <select name="result">
+          <option value="">전체</option><option value="win">승리</option><option value="loss">패배</option>
+          <option value="abandoned">중단</option><option value="unknown">확인 불가</option>
+        </select></label>
+        <button type="submit">필터 적용</button>
+        <button type="reset" class="secondary">초기화</button>
+      </form>
+      <p id="records-status" role="status"></p>
+      <ul id="records" class="record-list"></ul>
+    </section>
+    <section id="detail" aria-labelledby="detail-title" hidden>
+      <h2 id="detail-title" tabindex="-1">기록 상세</h2>
+      <div id="detail-content"></div>
+      <button id="delete-run" type="button" class="secondary">이 기록 삭제</button>
     </section>
   </main>
 </body>

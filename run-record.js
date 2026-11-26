@@ -33,6 +33,7 @@ function nonnegativeInteger(value) {
 }
 
 function extractRun(run, player) {
+  const characterId = readIdentifier(player?.character, '캐릭터').trim();
   const acts = readArray(run.map_point_history, '방문 기록');
   const floors = acts.flatMap((act, actIndex) =>
     readArray(act, '막별 방문 기록').map((visit, visitIndex) =>
@@ -42,18 +43,28 @@ function extractRun(run, player) {
     order: index + 1,
     addedFloor: nonnegativeInteger(relic.floor_added_to_deck),
   }));
+  const deck = readArray(player.deck, '최종 덱').map((card, index) => ({
+    cardId: readIdentifier(card?.id, '카드'),
+    order: index + 1,
+    upgradeLevel: nonnegativeInteger(card.current_upgrade_level),
+  }));
+  const result = getRunResult(run);
+  const defeatCause = [run.killed_by_encounter, run.killed_by_event]
+    .filter((cause) => typeof cause === 'string' && cause && cause !== 'NONE.NONE');
 
   return {
-    characterId: readIdentifier(player.character, '캐릭터').trim(),
+    characterId,
     playMode: run.players.length === 1 ? 'single' : 'multi',
     gameMode: typeof run.game_mode === 'string' ? run.game_mode : null,
     playerCount: run.players.length,
     ascension: nonnegativeInteger(run.ascension),
-    result: getRunResult(run),
+    result,
+    defeatCause: result === 'loss' && defeatCause.length === 1 ? defeatCause[0] : null,
     buildId: typeof run.build_id === 'string' ? run.build_id : null,
     schemaVersion: nonnegativeInteger(run.schema_version),
     floors,
     relics,
+    deck,
   };
 }
 
@@ -97,6 +108,20 @@ function extractFloor(visit, actNumber, visitOrder, playerId) {
   };
 }
 
+function selectRunPlayer(run, playerId) {
+  if (!Array.isArray(run?.players) || run.players.length === 0) {
+    throw new Error('기록에서 참가자 목록을 찾을 수 없습니다.');
+  }
+  if (run.players.length === 1) return run.players[0];
+  if (!/^\d+$/.test(playerId)) {
+    throw new Error('멀티 기록의 숫자 플레이어 ID를 입력해 주세요.');
+  }
+  const matches = run.players.filter((entry) => entry?.id === playerId);
+  if (matches.length > 1) throw new Error('같은 플레이어 ID가 참가자 목록에 중복되어 있습니다.');
+  if (!matches.length) throw new Error('입력한 플레이어 ID와 일치하는 참가자가 없습니다.');
+  return matches[0];
+}
+
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { parseRun, extractRun };
+  module.exports = { parseRun, selectRunPlayer, extractRun };
 }

@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>플레이 기록 확인 | Spire Analytics</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="run-record.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <main>
+    <header>
+      <p>Spire Analytics</p>
+      <h1>플레이 기록 확인</h1>
+    </header>
+    <form id="run-form">
+      <div>
+        <label class="field-label" for="player-id">플레이어 ID</label>
+        <input id="player-id" name="playerId" type="text" inputmode="numeric" autocomplete="off">
+      </div>
+      <div>
+        <label class="field-label" for="run-file">기록 파일 (.run)</label>
+        <input id="run-file" type="file" accept=".run" required>
+      </div>
+      <button type="submit">기록 확인</button>
+    </form>
+    <p id="status" role="status"></p>
+    <section id="summary" aria-live="polite" aria-labelledby="summary-title" hidden>
+      <h2 id="summary-title">기록 요약</h2>
+      <dl>
+        <dt>플레이 모드</dt><dd id="run-mode"></dd>
+        <dt>참가자 수</dt><dd id="player-count"></dd>
+        <dt>내 캐릭터</dt><dd id="player-character"></dd>
+        <dt>승천 단계</dt><dd id="run-ascension"></dd>
+        <dt>런 결과</dt><dd id="run-result"></dd>
+        <dt>파일명</dt><dd id="selected-file"></dd>
+      </dl>
+    </section>
+  </main>
+</body>
+</html>

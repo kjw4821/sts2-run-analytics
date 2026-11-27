@@ -5,6 +5,10 @@ function normalizeId(id) {
   return id.replace(/^(CARD|CHARACTER)\./i, '').toUpperCase();
 }
 
+function parseRate(rate) {
+  return Number.isFinite(rate) && rate >= 0 && rate <= 100 ? rate / 100 : null;
+}
+
 function createCommunityCardStats(fetchStats = fetch) {
   const cache = new Map();
 
@@ -16,10 +20,18 @@ function createCommunityCardStats(fetchStats = fetch) {
       if (!Array.isArray(rows)) return null;
       const rates = new Map();
       for (const row of rows) {
-        if (typeof row?.id === 'string' && !row.upgraded &&
-            Number.isFinite(row.pick_rate) && row.pick_rate >= 0 && row.pick_rate <= 100) {
-          rates.set(normalizeId(row.id), row.pick_rate / 100);
-        }
+        if (typeof row?.id !== 'string' || row.upgraded) continue;
+        const winRate = parseRate(row.win_rate);
+        const hasSample = Number.isSafeInteger(row.picks) && row.picks > 0 &&
+          Number.isSafeInteger(row.wins) && row.wins >= 0 && row.wins <= row.picks;
+        rates.set(normalizeId(row.id), {
+          pickRate: parseRate(row.pick_rate),
+          holding: winRate === null ? null : {
+            winRate,
+            wins: hasSample ? row.wins : null,
+            sample: hasSample ? row.picks : null,
+          },
+        });
       }
       return rates;
     } catch {
@@ -28,7 +40,7 @@ function createCommunityCardStats(fetchStats = fetch) {
   }
 
   return async function lookup(filters, ids) {
-    if (!ids.length) return { rates: new Map(), scope: null };
+    if (!ids.length) return { rates: new Map(), holdings: new Map(), scope: null };
     const bracketParts = [];
     if (filters.mode === 'single') bracketParts.push('solo');
     if (filters.ascension === 10) bracketParts.push('a10');
@@ -50,7 +62,8 @@ function createCommunityCardStats(fetchStats = fetch) {
     }
     const rates = await entry.result;
     return {
-      rates: new Map(ids.map((id) => [id, rates?.get(normalizeId(id)) ?? null])),
+      rates: new Map(ids.map((id) => [id, rates?.get(normalizeId(id))?.pickRate ?? null])),
+      holdings: new Map(ids.map((id) => [id, rates?.get(normalizeId(id))?.holding ?? null])),
       scope: { character, bracket, available: rates !== null },
     };
   };

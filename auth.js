@@ -4,9 +4,10 @@ if (signup) {
   document.title = '회원가입 | Spire Analytics';
   field('title').textContent = field('submit').textContent = '회원가입';
   field('password').autocomplete = 'new-password';
+  field('password').minLength = 8;
   field('confirm-label').hidden = false;
   field('confirm').required = true;
-  field('notice').textContent = '아이디는 한글·영문·숫자·밑줄·하이픈 3~32자, 비밀번호는 12자 이상입니다.';
+  field('notice').textContent = '아이디는 한글·영문·숫자·밑줄·하이픈 3~32자, 비밀번호는 8자 이상입니다.';
   field('switch').href = '/login';
   field('switch').textContent = '로그인으로 돌아가기';
 }

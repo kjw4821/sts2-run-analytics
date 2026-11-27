@@ -5,6 +5,7 @@ const express = require('express');
 const { openDatabase, openTursoDatabase } = require('./database');
 const { createGameNames } = require('./game-names');
 const { createCommunityCardStats } = require('./community-card-stats');
+const { createCommunityAscensionStats } = require('./community-ascension-stats');
 const { parseRun, selectRunPlayer, extractRun } = require('./run-record');
 
 const { installAccounts } = require('./accounts');
@@ -29,6 +30,32 @@ function readFilters(params) {
       (result !== null && !['win', 'loss', 'abandoned', 'unknown'].includes(result)) ||
       (level && (!/^\d+$/.test(level) || !Number.isSafeInteger(ascension)))) return null;
   return { character, mode, ascension, result };
+}
+
+const DAY_SECONDS = 86400;
+const KOREA_OFFSET_SECONDS = 9 * 3600;
+
+function koreaMidnight(date) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date || '')) return NaN;
+  const utcMidnight = Date.parse(`${date}T00:00:00Z`);
+  if (!Number.isFinite(utcMidnight) || new Date(utcMidnight).toISOString().slice(0, 10) !== date) {
+    return NaN;
+  }
+  return utcMidnight / 1000 - KOREA_OFFSET_SECONDS;
+}
+
+function readCardPeriod(params) {
+  const period = params.get('period') ?? 'all';
+  if (period === 'all') return { start: null, end: null };
+  if (period === 'custom') {
+    const start = koreaMidnight(params.get('from'));
+    const lastDay = koreaMidnight(params.get('to'));
+    return start <= lastDay ? { start, end: lastDay + DAY_SECONDS } : null;
+  }
+  if (period !== '7' && period !== '30') return null;
+  const koreaNow = Date.now() / 1000 + KOREA_OFFSET_SECONDS;
+  const tomorrow = (Math.floor(koreaNow / DAY_SECONDS) + 1) * DAY_SECONDS - KOREA_OFFSET_SECONDS;
+  return { start: tomorrow - Number(period) * DAY_SECONDS, end: tomorrow };
 }
 
 function validateUpload(request, response, next) {
@@ -82,7 +109,7 @@ function digest(value) {
 }
 
 function createApp(database, gameNames = createGameNames(), communityCardStats = createCommunityCardStats(),
-  { publicUrl = null, username, credentials = null } = {}) {
+  { publicUrl = null, username, credentials = null, communityAscensionStats = createCommunityAscensionStats() } = {}) {
   const app = express();
   app.disable('x-powered-by');
   app.enable('case sensitive routing');
@@ -113,15 +140,29 @@ function createApp(database, gameNames = createGameNames(), communityCardStats =
     express.raw({ type: 'application/octet-stream', limit: MAX_FILE_BYTES, inflate: false }),
     (request, response) => importFile(request, response, database));
   app.get('/api/dashboard', async (request, response) => {
-    const groups = await database.dashboard(request.userId);
+    const [groups, ascensions] = await Promise.all([
+      database.dashboard(request.userId),
+      database.dashboardAscensions(request.userId),
+    ]);
     const ids = [...new Set(groups.map((group) => group.character_id).filter(Boolean))];
     const names = await gameNames.lookup(ids, 'CHARACTER');
-    return json(response, 200, { groups, characterNames: Object.fromEntries(names) });
+    return json(response, 200, { groups, ascensions, characterNames: Object.fromEntries(names) });
+  });
+  app.get('/api/community-ascensions', async (request, response) => {
+    const params = new URL(request.originalUrl, 'http://localhost').searchParams;
+    const filters = readFilters(params);
+    if (!filters) return json(response, 400, { message: '검색 조건을 확인해 주세요.' });
+    const points = await communityAscensionStats(filters);
+    return json(response, 200, { points });
   });
   app.get('/api/card-analysis', async (request, response) => {
-    const filters = readFilters(new URL(request.originalUrl, 'http://localhost').searchParams);
+    const params = new URL(request.originalUrl, 'http://localhost').searchParams;
+    const filters = readFilters(params);
     if (!filters) return json(response, 400, { message: '필터 값을 확인해 주세요.' });
-    const rows = (await database.cardAnalysis(filters, request.userId)).filter((row) => row.picked > 0);
+    const period = readCardPeriod(params);
+    if (!period) return json(response, 400, { message: '조회 기간과 시작일·종료일을 확인해 주세요.' });
+    const rows = (await database.cardAnalysis({ ...filters, ...period }, request.userId))
+      .filter((row) => row.picked > 0);
     const ids = rows.map((row) => row.card_id);
     const [rarities, types] = await Promise.all([
       gameNames.lookup(ids, 'CARD', 'rarity'),
@@ -145,6 +186,7 @@ function createApp(database, gameNames = createGameNames(), communityCardStats =
       full_image_url: fullImages.get(row.card_id) ?? null,
       image_url: portraits.get(row.card_id) ?? null,
       community_pick_rate: community.rates.get(row.card_id) ?? null,
+      community_holding: community.holdings?.get(row.card_id) ?? null,
     })) });
   });
   app.get('/api/tendency-analysis', async (request, response) => {

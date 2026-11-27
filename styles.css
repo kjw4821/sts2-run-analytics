@@ -26,10 +26,111 @@ input, select, button {
   font: inherit;
 }
 input, select { background: #171923; color: inherit; }
+.ascension-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: .75rem 1rem;
+}
+.ascension-toggle {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  min-height: 2.6rem;
+}
+.ascension-toggle input { width: 1.15rem; height: 1.15rem; margin: 0; }
+.ascension-chart { overflow-x: auto; padding: 2rem .35rem .35rem; }
+.ascension-grid { position: relative; margin-left: 3.25rem; height: 13rem; }
+.ascension-chart:has(.ascension-comparison:not(:empty)) { padding-bottom: 5.25rem; }
+.ascension-chart:not(:has(.ascension-comparison:not(:empty))) { padding-bottom: 2.65rem; }
+.ascension-tick {
+  position: absolute;
+  inset-inline: 0;
+  border-top: 1px solid #777d9266;
+}
+.ascension-tick span {
+  position: absolute;
+  right: calc(100% + .4rem);
+  transform: translateY(-50%);
+  font-size: .8rem;
+}
+.ascension-columns { display: flex; height: 100%; }
+#ascension-results .ascension-column {
+  display: block;
+  position: relative;
+  flex: 1 0 6rem;
+  width: auto;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: .3rem;
+  background: transparent;
+  color: inherit;
+  text-align: center;
+}
+#ascension-results button.ascension-column:hover { background: #777d9226; }
+.ascension-plot { position: absolute; inset: 0; }
+.ascension-bar {
+  position: absolute;
+  bottom: 0;
+  left: 25%;
+  width: 50%;
+  min-height: 2px;
+  background: #8b79ce;
+  border-radius: .25rem .25rem 0 0;
+}
+.ascension-value {
+  position: absolute;
+  inset-inline: 0;
+  z-index: 2;
+  padding-bottom: .3rem;
+  font-size: .8rem;
+  font-weight: 700;
+  text-shadow: 0 1px 3px #171923, 0 0 4px #171923;
+}
+.ascension-caption, .ascension-comparison {
+  position: absolute;
+  inset-inline: .2rem;
+  top: calc(100% + .45rem);
+  font-size: .85rem;
+}
+.ascension-comparison { top: calc(100% + 1.75rem); color: #f5cc83; font-size: .75rem; }
+.ascension-line {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+.ascension-line path { fill: none; stroke: #f5cc83; stroke-width: 2px; stroke-dasharray: 5 4; }
+.ascension-marker {
+  position: absolute;
+  left: 50%;
+  width: .5rem;
+  height: .5rem;
+  transform: translate(-50%, 50%);
+  border-radius: 50%;
+  background: #f5cc83;
+}
 :focus-visible { outline: 2px solid #eec782; outline-offset: 3px; }
 button { background: #eec782; color: #231b10; border: 0; font-weight: 750; cursor: pointer; }
 button:disabled { opacity: .65; cursor: wait; }
 button.secondary { background: #34384a; color: inherit; }
+.workspace-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: .25rem;
+  margin-top: 1.25rem;
+  padding: .3rem;
+  background: #222532;
+  border: 1px solid #474b5c;
+  border-radius: .75rem;
+}
+.workspace-tabs button { padding: .65rem .25rem; overflow-wrap: anywhere; }
+.workspace-tabs button[aria-selected="false"] { background: transparent; color: inherit; }
+.workspace-tabs button[aria-selected="false"]:hover { background: #34384a; }
+.import-panel { margin-top: 1.25rem; }
 .import-modes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .5rem; }
 .import-modes button[aria-pressed="false"] { background: #34384a; color: inherit; }
 .import-fields { min-width: 0; margin: 0; padding: 0; border: 0; }
@@ -128,7 +229,14 @@ dd { margin: 0; overflow-wrap: anywhere; }
 }
 .visit-room + .visit-room { margin-top: .75rem; }
 .visit-room h4 { margin: 0; }
+.visit-room h4[data-room-type="elite"] { color: #ddd0ff; }
+.visit-room h4[data-room-type="boss"] { color: #b78af5; font-weight: 800; }
+.visit-room h4[data-room-type="rest_site"] { color: #86efac; }
+.visit-room h4[data-room-type="shop"] { color: #fde047; }
 .visit-list p { margin: .3rem 0 0; color: #c9c8d3; }
+.visit-hp-gain { color: #86efac; }
+.visit-hp-loss, .visit-gold-loss { color: #fca5a5; }
+.visit-hp-low, .visit-gold-gain { color: #fde047; }
 .visit-art { display: flex; flex-wrap: wrap; gap: .5rem; margin-bottom: .5rem; }
 .visit-art:empty { display: none; }
 .visit-art img { width: min(100%, 6rem); height: 5rem; object-fit: contain; }

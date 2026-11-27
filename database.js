@@ -41,7 +41,7 @@ function openDatabase(filename) {
           ALTER TABLE RunDeckCards ADD COLUMN enchantment_id TEXT;
           ALTER TABLE RunDeckCards ADD COLUMN enchantment_amount INTEGER CHECK (enchantment_amount >= 0);
         `);
-      } else if (version !== 2 && version !== 3 && version !== 4 && version !== 5) {
+      } else if (![2, 3, 4, 5, 6].includes(version)) {
         throw new Error(`지원하지 않는 DB 버전입니다. (${version})`);
       }
       if (version < 3) {
@@ -84,7 +84,7 @@ async function openTursoDatabase(url, token, request) {
   await db.transaction(async (execute) => {
     await execute([['CREATE TABLE IF NOT EXISTS SpireSchemaVersion (version INTEGER NOT NULL)']]);
     const [{ rows: versions }] = await execute([['SELECT version FROM SpireSchemaVersion']]);
-    if (versions.length === 1 && versions[0].version === 5) return;
+    if (versions.length === 1 && [5, 6].includes(versions[0].version)) return;
     if (versions.length === 1 && versions[0].version === 4) {
       await execute([...accountMigration.map(sql => [sql]), ['UPDATE SpireSchemaVersion SET version = 5']]);
       return;
@@ -246,6 +246,17 @@ function createStore(db, write) {
     FROM owned GROUP BY play_mode, character_id
     ORDER BY play_mode, character_id
   `);
+  const dashboardAscensions = db.prepare(`
+    WITH owned AS (SELECT * FROM Runs WHERE user_id = ? AND ascension IS NOT NULL)
+    SELECT NULL AS play_mode, NULL AS character_id, ascension, ${dashboardCounts} FROM owned GROUP BY ascension
+    UNION ALL
+    SELECT play_mode, NULL, ascension, ${dashboardCounts} FROM owned GROUP BY play_mode, ascension
+    UNION ALL
+    SELECT NULL, character_id, ascension, ${dashboardCounts} FROM owned GROUP BY character_id, ascension
+    UNION ALL
+    SELECT play_mode, character_id, ascension, ${dashboardCounts} FROM owned GROUP BY play_mode, character_id, ascension
+    ORDER BY ascension
+  `);
   const cardAnalysis = db.prepare(`
     SELECT card_id, COUNT(*) AS offered, SUM(was_picked) AS picked,
       COUNT(DISTINCT run_id) FILTER (WHERE was_picked = 1 AND result = 'win') AS wins,
@@ -258,6 +269,8 @@ function createStore(db, write) {
       AND ($character IS NULL OR character_id = $character)
       AND ($mode IS NULL OR play_mode = $mode)
       AND ($ascension IS NULL OR ascension = $ascension)
+      AND ($start IS NULL OR start_time >= $start)
+      AND ($end IS NULL OR start_time < $end)
     GROUP BY card_id
     ORDER BY offered DESC, picked DESC, card_id
   `);
@@ -362,8 +375,11 @@ function createStore(db, write) {
     dashboard(owner = 1) {
       return dashboard.all(owner);
     },
-    cardAnalysis({ character, mode, ascension }, owner = 1) {
-      return cardAnalysis.all({ character, mode, ascension, owner });
+    dashboardAscensions(owner = 1) {
+      return dashboardAscensions.all(owner);
+    },
+    cardAnalysis({ character, mode, ascension, start = null, end = null }, owner = 1) {
+      return cardAnalysis.all({ character, mode, ascension, start, end, owner });
     },
     async tendencyAnalysis(filters, owner = 1) {
       const analysis = await readTendency(filters, null, owner);

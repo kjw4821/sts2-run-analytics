@@ -3,6 +3,7 @@ const { randomBytes, createHash, timingSafeEqual, scrypt } = require('node:crypt
 const { promisify } = require('node:util');
 const derive = promisify(scrypt);
 const lifetime = 7 * 86400000;
+const minimumPasswordLength = 8;
 const digest = text => createHash('sha256').update(text).digest();
 
 async function passwordHash(password, salt = randomBytes(16).toString('hex')) {
@@ -38,8 +39,8 @@ function installAccounts(app, db, { publicUrl, username: ownerName, credentials 
       let userId;
       const owner = ownerName && username.toLowerCase() === ownerName.toLowerCase();
       if (req.path === '/signup') {
-        if (!/^[가-힣a-zA-Z0-9_-]{3,32}$/u.test(username) || password.length < 12)
-          return res.status(400).json({ message: '아이디는 한글·영문·숫자·밑줄·하이픈 3~32자, 비밀번호는 12자 이상으로 입력해 주세요.' });
+        if (!/^[가-힣a-zA-Z0-9_-]{3,32}$/u.test(username) || password.length < minimumPasswordLength)
+          return res.status(400).json({ message: `아이디는 한글·영문·숫자·밑줄·하이픈 3~32자, 비밀번호는 ${minimumPasswordLength}자 이상으로 입력해 주세요.` });
         const user = !owner && await sql('INSERT INTO Users(username,password_hash) VALUES (?,?) ON CONFLICT DO NOTHING RETURNING id', username, await passwordHash(password));
         if (!user) return res.status(409).json({ message: '이미 사용 중인 아이디입니다.' });
         userId = user.id;
@@ -81,7 +82,7 @@ function installAccounts(app, db, { publicUrl, username: ownerName, credentials 
   app.post('/api/account/password', express.json({limit:'4kb'}), async (req,res) => {
     const {current, replacement} = req.body || {};
     if (req.userId === 1 || typeof current !== 'string' || typeof replacement !== 'string' ||
-        replacement.length < 12 || replacement.length > 1024 || current.length > 1024) return res.sendStatus(400);
+        replacement.length < minimumPasswordLength || replacement.length > 1024 || current.length > 1024) return res.sendStatus(400);
     const user = await sql('SELECT password_hash FROM Users WHERE id = ?', req.userId);
     const actual = await passwordHash(current, user.password_hash.split('.')[0]);
     if (!timingSafeEqual(Buffer.from(actual), Buffer.from(user.password_hash))) return res.sendStatus(403);

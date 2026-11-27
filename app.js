@@ -8,6 +8,8 @@ const folderFields = document.querySelector('#folder-fields');
 const fileFields = document.querySelector('#file-fields');
 const importButton = form.querySelector('button[type="submit"]');
 const importStatus = document.querySelector('#status');
+const importDetails = document.querySelector('#import-details');
+const importSummary = document.querySelector('#import-summary');
 const importResults = document.querySelector('#import-results');
 const filters = document.querySelector('#filters');
 const characterFilter = document.querySelector('#character-filter');
@@ -20,6 +22,14 @@ const nextRecords = document.querySelector('#next-records');
 const dashboard = document.querySelector('#dashboard');
 const dashboardStatus = document.querySelector('#dashboard-status');
 const cardFilters = document.querySelector('#card-filters');
+const ascensionDashboard = document.querySelector('#ascension-dashboard');
+const ascensionMode = document.querySelector('#ascension-mode');
+const ascensionCharacter = document.querySelector('#ascension-character');
+const ascensionCommunity = document.querySelector('#ascension-community');
+const ascensionCommunityStatus = document.querySelector('#ascension-community-status');
+const ascensionResults = document.querySelector('#ascension-results');
+let ascensionGroups = [];
+let ascensionRequest = 0;
 const cardAnalysisStatus = document.querySelector('#card-analysis-status');
 const cardAnalysis = document.querySelector('#card-analysis');
 const tendencyFilters = document.querySelector('#tendency-filters');
@@ -96,7 +106,9 @@ function showImportSelection() {
   importButton.disabled = files.length === 0;
   importStatus.textContent = message;
   importResults.replaceChildren();
-  importResults.hidden = true;
+  importDetails.open = false;
+  importDetails.hidden = true;
+  importStatus.hidden = false;
 }
 
 for (const button of importModeButtons) {
@@ -153,7 +165,9 @@ form.addEventListener('submit', async (event) => {
   const controls = [fields, importButton, ...importModeButtons];
   for (const control of controls) control.disabled = true;
   importResults.replaceChildren();
-  importResults.hidden = false;
+  importDetails.open = false;
+  importDetails.hidden = true;
+  importStatus.hidden = false;
   const totals = { imported: 0, duplicate: 0, failed: 0 };
   try {
     for (const [index, file] of files.entries()) {
@@ -180,7 +194,9 @@ form.addEventListener('submit', async (event) => {
       }
       importResults.append(row);
     }
-    importStatus.textContent = `저장 ${totals.imported}개 · 중복 ${totals.duplicate}개 · 실패 ${totals.failed}개`;
+    importSummary.textContent = `총 ${files.length}개 · 저장 ${totals.imported}개 · 중복 ${totals.duplicate}개 · 실패 ${totals.failed}개`;
+    importStatus.hidden = true;
+    importDetails.hidden = false;
     await Promise.all([loadRecords(true), loadDashboard(), loadCardAnalysis(), loadTendencyAnalysis()]);
   } finally {
     for (const control of controls) control.disabled = false;
@@ -198,23 +214,157 @@ function scoreText({ total, wins, decided, win_rate }) {
   return `총 ${total}런 · 승률 ${rate} (${wins}/${decided})`;
 }
 
-function showCharacterRuns(mode, character) {
-  if (!Array.from(characterFilter.options).some((option) => option.value === character)) {
+const workspaceTabs = Array.from(document.querySelectorAll('#workspace-tabs [role="tab"]'));
+const workspacePanels = workspaceTabs.map((tab) => document.getElementById(tab.getAttribute('aria-controls')));
+
+function activateWorkspaceTab(selected) {
+  workspaceTabs.forEach((tab, index) => {
+    const active = tab === selected;
+    tab.setAttribute('aria-selected', String(active));
+    tab.tabIndex = active ? 0 : -1;
+    workspacePanels[index].hidden = !active;
+  });
+}
+
+workspaceTabs.forEach((tab, index) => {
+  tab.addEventListener('click', () => activateWorkspaceTab(tab));
+  tab.addEventListener('keydown', (event) => {
+    const last = workspaceTabs.length - 1;
+    const destinations = {
+      ArrowLeft: index === 0 ? last : index - 1,
+      ArrowRight: index === last ? 0 : index + 1,
+      Home: 0,
+      End: last,
+    };
+    if (!Object.hasOwn(destinations, event.key)) return;
+    event.preventDefault();
+    const next = workspaceTabs[destinations[event.key]];
+    activateWorkspaceTab(next);
+    next.focus();
+  });
+});
+
+function showDashboardRuns(mode, character = '', ascension = '') {
+  if (character && !Array.from(characterFilter.options).some((option) => option.value === character)) {
     characterFilter.add(new Option(character, character));
   }
   characterFilter.value = character;
   filters.elements.mode.value = mode;
-  filters.elements.ascension.value = '';
+  filters.elements.ascension.value = ascension;
   filters.elements.result.value = '';
+  activateWorkspaceTab(document.querySelector('#tab-records'));
   loadRecords(true);
   document.querySelector('#records-title').focus();
+}
+
+function renderAscensionDashboard(community = []) {
+  const mode = ascensionMode.value;
+  const character = ascensionCharacter.value;
+  const groups = new Map(ascensionGroups
+    .filter((group) => group.play_mode === (mode || null) && group.character_id === (character || null))
+    .map((group) => [group.ascension, group]));
+  const external = new Map(community.map((point) => [point.ascension, point]));
+  const levels = [...new Set([...groups.keys(), ...external.keys()])].sort((a, b) => a - b);
+  if (!levels.length) {
+    ascensionResults.replaceChildren(element('p', '해당 조건의 승천 기록이 없습니다.'));
+    return;
+  }
+  const legend = element('p', external.size ? '■ 내 승률　┄ Spire Codex 커뮤니티 승률' : '■ 내 승률');
+  const chart = element('div');
+  chart.className = 'ascension-chart';
+  chart.tabIndex = 0;
+  chart.setAttribute('aria-label', '승천 단계별 승률');
+  const grid = element('div');
+  grid.className = 'ascension-grid';
+  grid.style.minWidth = `${levels.length * 6}rem`;
+  for (const tick of [100, 75, 50, 25, 0]) {
+    const line = element('div');
+    line.className = 'ascension-tick';
+    line.style.top = `${100 - tick}%`;
+    line.append(element('span', `${tick}%`));
+    grid.append(line);
+  }
+  const columns = element('div');
+  columns.className = 'ascension-columns';
+  const svgNamespace = 'http://www.w3.org/2000/svg';
+  const overlay = document.createElementNS(svgNamespace, 'svg');
+  overlay.setAttribute('class', 'ascension-line');
+  overlay.setAttribute('aria-hidden', 'true');
+  overlay.setAttribute('viewBox', `0 0 ${levels.length} 100`);
+  overlay.setAttribute('preserveAspectRatio', 'none');
+  let path = '';
+  let previousLevel = null;
+  levels.forEach((level, index) => {
+    const group = groups.get(level);
+    const point = external.get(level);
+    const label = `승천 ${level}`;
+    const rate = group?.win_rate;
+    const value = rate == null ? '산출 불가' : `${winRateFormat.format(rate)} (${group.wins}/${group.decided})`;
+    const column = group ? action('', () => showDashboardRuns(mode, character, level)) : element('div');
+    column.className = 'ascension-column';
+    const communityLabel = point ? `커뮤니티 ${winRateFormat.format(point.win_rate)} · 표본 ${point.sample.toLocaleString('ko-KR')}건` : '';
+    column.setAttribute('aria-label', [label, `내 승률 ${value}`, communityLabel].filter(Boolean).join(', '));
+    const plot = element('span');
+    plot.className = 'ascension-plot';
+    const figure = element('span', value);
+    figure.className = 'ascension-value';
+    figure.style.bottom = `${(rate ?? 0) * 100}%`;
+    if (rate != null) {
+      const bar = element('span');
+      bar.className = 'ascension-bar';
+      bar.style.height = `${rate * 100}%`;
+      plot.append(bar);
+    }
+    if (point) {
+      path += `${previousLevel === level - 1 ? 'L' : 'M'} ${index + 0.5} ${100 - point.win_rate * 100} `;
+      const marker = element('span');
+      marker.className = 'ascension-marker';
+      marker.style.bottom = `${point.win_rate * 100}%`;
+      plot.append(marker);
+    }
+    previousLevel = point ? level : null;
+    plot.append(figure);
+    const caption = element('span', label);
+    caption.className = 'ascension-caption';
+    const comparison = element('span', communityLabel);
+    comparison.className = 'ascension-comparison';
+    column.append(plot, caption, comparison);
+    columns.append(column);
+  });
+  const trace = document.createElementNS(svgNamespace, 'path');
+  trace.setAttribute('d', path);
+  trace.setAttribute('vector-effect', 'non-scaling-stroke');
+  overlay.append(trace);
+  grid.append(columns, overlay);
+  chart.append(grid);
+  ascensionResults.replaceChildren(legend, chart);
+}
+
+async function refreshAscensionDashboard() {
+  const request = ++ascensionRequest;
+  renderAscensionDashboard();
+  ascensionCommunityStatus.hidden = !ascensionCommunity.checked;
+  if (!ascensionCommunity.checked) return;
+  ascensionCommunityStatus.textContent = '커뮤니티 승률을 불러오는 중…';
+  const params = new URLSearchParams({ mode: ascensionMode.value, character: ascensionCharacter.value });
+  try {
+    const { points } = await api(`/api/community-ascensions?${params}`);
+    if (request !== ascensionRequest) return;
+    if (points === null) throw new Error('Community stats unavailable');
+    renderAscensionDashboard(points);
+    ascensionCommunityStatus.textContent = points.length
+      ? 'Spire Codex에 제출된 기록 중 공개된 표본을 사용합니다.'
+      : '해당 조건에서 공개된 커뮤니티 통계가 없습니다.';
+  } catch {
+    if (request === ascensionRequest) ascensionCommunityStatus.textContent = '커뮤니티 승률을 불러오지 못했습니다.';
+  }
 }
 
 async function loadDashboard() {
   const request = ++dashboardRequest;
   dashboardStatus.textContent = '성적을 불러오는 중…';
   try {
-    const { groups, characterNames } = await api('/api/dashboard');
+    const { groups, ascensions, characterNames } = await api('/api/dashboard');
     if (request !== dashboardRequest) return;
     const overall = groups.find((group) => group.play_mode === null);
     const modes = element('div');
@@ -231,7 +381,7 @@ async function loadDashboard() {
         const id = group.character_id;
         const name = Object.hasOwn(characterNames, id) ? characterNames[id] : id;
         const row = element('li');
-        row.append(action(`${name} · ${scoreText(group)}`, () => showCharacterRuns(mode, id)));
+        row.append(action(`${name} · ${scoreText(group)}`, () => showDashboardRuns(mode, id)));
         list.append(row);
       }
       if (characters.length) panel.append(list);
@@ -239,10 +389,20 @@ async function loadDashboard() {
     }
     dashboard.replaceChildren(element('p', `전체 · ${scoreText(overall)}`),
       element('p', '괄호 안은 승리 수 / 승패가 확인된 런 수입니다.'), modes);
+    ascensionGroups = ascensions;
+    const selectedCharacter = ascensionCharacter.value;
+    const ids = [...new Set(groups.map((group) => group.character_id).filter(Boolean))];
+    ascensionCharacter.replaceChildren(new Option('전체', ''),
+      ...ids.map((id) => new Option(characterNames[id] ?? id, id)));
+    ascensionCharacter.value = ids.includes(selectedCharacter) ? selectedCharacter : '';
+    ascensionDashboard.hidden = false;
+    refreshAscensionDashboard();
     dashboardStatus.textContent = overall.total ? '' : '저장된 기록이 없습니다.';
   } catch (error) {
     if (request !== dashboardRequest) return;
+    ++ascensionRequest;
     dashboard.replaceChildren();
+    ascensionDashboard.hidden = true;
     dashboardStatus.textContent = error.message;
   }
 }
@@ -274,13 +434,21 @@ function rankedCard(card, rank, community) {
     artwork.append(image);
   }
   const stats = element('div');
+  const unavailable = community?.available ? '통계 없음' : '조회 실패';
   const value = card.community_pick_rate;
-  const communityRate = Number.isFinite(value) ? winRateFormat.format(value)
-    : community?.available ? '통계 없음' : '조회 실패';
+  const communityRate = Number.isFinite(value) ? winRateFormat.format(value) : unavailable;
+  const holding = card.community_holding;
+  let holdingRate = unavailable;
+  if (Number.isFinite(holding?.winRate)) {
+    holdingRate = winRateFormat.format(holding.winRate);
+    if (holding.sample !== null) {
+      holdingRate += ` (${holding.wins.toLocaleString('ko-KR')} / ${holding.sample.toLocaleString('ko-KR')})`;
+    }
+  }
   stats.append(
     element('h4', `${rank}위 · ${card.name}`),
     element('p', `내 채용률 ${formatCardRate(card.picked, card.offered)} | 커뮤니티 채용률 ${communityRate}`),
-    element('p', `선택 런 승률 ${formatCardRate(card.wins, card.decided)}`),
+    element('p', `선택 런 승률 ${formatCardRate(card.wins, card.decided)} | 커뮤니티 보유 런 승률 ${holdingRate}`),
   );
   row.append(artwork, stats);
   return row;
@@ -493,13 +661,43 @@ function visitRoom(room) {
   }
   const place = placeLabels.get(room.room_type) ?? room.room_type ?? '장소 확인 불가';
   const name = room.name ?? room.model_id;
-  section.append(artwork, element('h4', name ? `${place} · ${name}` : place));
+  const heading = element('h4', name ? `${place} · ${name}` : place);
+  heading.dataset.roomType = room.room_type ?? '';
+  section.append(artwork, heading);
   if (monsters.size) {
     const names = Array.from(monsters.values(), (monster) =>
       (monster.name ?? monster.id) + (monster.count > 1 ? ` × ${monster.count}` : ''));
     section.append(element('p', names.join(', ')));
   }
   return section;
+}
+
+function visitStats(floor, previous) {
+  const stats = element('p', `${floor.visit_order}번째 방문 · 체력 ${floor.current_hp ?? '—'}/${floor.max_hp ?? '—'}`);
+  if (previous?.current_hp != null && floor.current_hp != null) {
+    const delta = floor.current_hp - previous.current_hp;
+    if (delta !== 0) {
+      const change = element('span', delta > 0 ? ` (+${delta})` : ` (−${Math.abs(delta)})`);
+      change.className = delta > 0 ? 'visit-hp-gain' : 'visit-hp-loss';
+      stats.append(change);
+    }
+  }
+  if (floor.current_hp != null && floor.current_hp <= 20) {
+    const critical = floor.current_hp <= 10;
+    const status = element('span', critical ? ' · 체력 위기' : ' · 체력 부족');
+    status.className = critical ? 'visit-hp-loss' : 'visit-hp-low';
+    stats.append(status);
+  }
+  stats.append(` · 골드 ${floor.current_gold ?? '—'}`);
+  if (previous?.current_gold != null && floor.current_gold != null) {
+    const delta = floor.current_gold - previous.current_gold;
+    if (delta !== 0) {
+      const change = element('span', delta > 0 ? ` (+${delta})` : ` (−${Math.abs(delta)})`);
+      change.className = delta > 0 ? 'visit-gold-gain' : 'visit-gold-loss';
+      stats.append(change);
+    }
+  }
+  return stats;
 }
 
 function visitPath(floors) {
@@ -511,6 +709,7 @@ function visitPath(floors) {
     if (!acts.has(floor.act_number)) acts.set(floor.act_number, []);
     acts.get(floor.act_number).push(floor);
   }
+  let previous = null;
   for (const [act, visits] of acts) {
     const group = element('details');
     group.className = 'visit-act';
@@ -521,7 +720,8 @@ function visitPath(floors) {
       const rooms = floor.rooms?.length ? floor.rooms :
         [{ room_type: floor.room_type ?? floor.map_point_type }];
       for (const room of rooms) tile.append(visitRoom(room));
-      tile.append(element('p', `${floor.visit_order}번째 방문 · 체력 ${floor.current_hp ?? '—'}/${floor.max_hp ?? '—'} · 골드 ${floor.current_gold ?? '—'}`));
+      tile.append(visitStats(floor, previous));
+      previous = floor;
       list.append(tile);
     }
     group.append(element('summary', `${act}막 · ${visits.length}곳`), list);
@@ -691,7 +891,21 @@ deleteButton.addEventListener('click', async () => {
 });
 
 loadRecords();
+for (const control of [ascensionMode, ascensionCharacter, ascensionCommunity]) {
+  control.addEventListener('change', refreshAscensionDashboard);
+}
 loadDashboard();
+function syncCardPeriodInputs() {
+  const custom = cardFilters.elements.period.value === 'custom';
+  for (const name of ['from', 'to']) {
+    const input = cardFilters.elements[name];
+    input.closest('label').hidden = !custom;
+    input.disabled = !custom;
+    input.required = custom;
+  }
+}
+cardFilters.elements.period.addEventListener('change', syncCardPeriodInputs);
+syncCardPeriodInputs();
 cardFilters.addEventListener('submit', (event) => {
   event.preventDefault();
   loadCardAnalysis();
